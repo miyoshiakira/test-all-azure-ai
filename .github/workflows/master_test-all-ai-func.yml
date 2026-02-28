@@ -1,7 +1,3 @@
-# Docs for the Azure Web Apps Deploy action: https://github.com/azure/functions-action
-# More GitHub Actions for Azure: https://github.com/Azure/actions
-# More info on Python, GitHub Actions, and Azure Functions: https://aka.ms/python-webapps-actions
-
 name: Build and deploy Python project to Azure Function App - test-all-ai-func
 
 on:
@@ -11,11 +7,11 @@ on:
   workflow_dispatch:
 
 env:
-  AZURE_FUNCTIONAPP_PACKAGE_PATH: 'backend'
+  AZURE_FUNCTIONAPP_PACKAGE_PATH: 'backend' # ソースコードがあるフォルダ
   PYTHON_VERSION: '3.11'
 
 jobs:
-  build:
+  build-and-deploy: # ジョブを1つにまとめるとさらにシンプルです
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -26,44 +22,15 @@ jobs:
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
-      - name: Install dependencies
-        run: |
-          pip install -r requirements.txt
-        working-directory: ${{ env.AZURE_FUNCTIONAPP_PACKAGE_PATH }}
-
-      - name: Zip artifact for deployment
-        # backendの中身だけをzipにする。その際、venvとrelease.zip自身、backend.zipなどのゴミを除外
-        run: |
-          cd ${{ env.AZURE_FUNCTIONAPP_PACKAGE_PATH }}
-          zip -r ../release.zip . -x "venv/*" "*/venv/*" "release.zip" "backend.zip"
-
-      - name: Upload artifact for deployment job
-        uses: actions/upload-artifact@v4
-        with:
-          name: python-app
-          path: release.zip # release.zipだけをアップロード
-
-  deploy:
-    runs-on: ubuntu-latest
-    needs: build
-    steps:
-      - name: Download artifact from build job
-        uses: actions/download-artifact@v4
-        with:
-          name: python-app
-
-      - name: Unzip artifact for deployment
-        run: |
-          unzip release.zip
-          rm release.zip
-
-      - name: Check files before deploy (ここで host.json がトップに見えるはず)
-        run: ls -la
-
+      # Zip化せず、フォルダを指定して直接デプロイ
       - name: 'Deploy to Azure Functions'
         uses: Azure/functions-action@v1
         with:
           app-name: 'test-all-ai-func'
           slot-name: 'Production'
-          package: '.' 
+          # backendフォルダをそのまま指定
+          package: ${{ env.AZURE_FUNCTIONAPP_PACKAGE_PATH }} 
           publish-profile: ${{ secrets.AZUREAPPSERVICE_PUBLISHPROFILE_43E781FD13634D8D834EB60767B1FFFB }}
+          # 【重要】Azure側でビルド（pip install）を実行させるフラグ
+          scm-do-build-during-deployment: true
+          enable-oryx-build: true
