@@ -40,7 +40,10 @@ jobs:
       # Optional: Add step to run tests here
 
       - name: Zip artifact for deployment
-        run: zip release.zip ./* -r
+        # backendフォルダに移動してから、その「中身」を一つ上の階層のrelease.zipに固める
+        run: |
+          cd ${{ env.AZURE_FUNCTIONAPP_PACKAGE_PATH }}
+          zip -r ../release.zip .
 
       - name: Upload artifact for deployment job
         uses: actions/upload-artifact@v4
@@ -67,11 +70,11 @@ jobs:
         
       - name: 'Deploy to Azure Functions'
         uses: Azure/functions-action@v1
-        id: deploy-to-function
         with:
           app-name: 'test-all-ai-func'
           slot-name: 'Production'
-          package: ${{ env.AZURE_FUNCTIONAPP_PACKAGE_PATH }}
-
+          # backend ではなく . (今いる場所) を指定
+          package: '.' 
           publish-profile: ${{ secrets.AZUREAPPSERVICE_PUBLISHPROFILE_43E781FD13634D8D834EB60767B1FFFB }}
+
 
