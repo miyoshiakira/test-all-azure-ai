@@ -31,6 +31,8 @@ jobs:
           # backendフォルダをそのまま指定
           package: ${{ env.AZURE_FUNCTIONAPP_PACKAGE_PATH }} 
           publish-profile: ${{ secrets.AZUREAPPSERVICE_PUBLISHPROFILE_43E781FD13634D8D834EB60767B1FFFB }}
-          # 一旦 Oryx ビルドを GitHub 側に任せる構成に戻してみる（切り分けのため）
-          scm-do-build-during-deployment: false
+          # 【ここが重要】強制的にAzure側でビルドさせる
+          scm-do-build-during-deployment: true
+          enable-oryx-build: true
+
 
