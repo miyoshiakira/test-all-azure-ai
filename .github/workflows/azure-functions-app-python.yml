@@ -82,6 +82,8 @@ jobs:
           app-name: 'test-all-ai-func'
           slot-name: 'Production'
           package: ${{ env.AZURE_FUNCTIONAPP_PACKAGE_PATH }}
+          # ↓ これ1本に集約できます
+          publish-profile: ${{ secrets.AZURE_FUNCTIONAPP_PUBLISH_PROFILE }}
 
           
 
