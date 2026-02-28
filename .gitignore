@@ -1,0 +1,38 @@
+# Environment
+.env
+local.settings.json
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+.Python
+
+# Node.js
+node_modules/
+dist/
+.pnp.*
+.yarn/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Azure Functions
+.python_packages/
+.funcignore
+
+# Build outputs
+*.egg-info/
+build/
+
+# Project notes with secrets
+構成プロンプト.txt
