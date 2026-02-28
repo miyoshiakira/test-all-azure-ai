@@ -67,6 +67,14 @@ jobs:
         run: |
           unzip release.zip
           rm release.zip
+
+      - name: Check files before deploy
+        run: ls -la
+
+      - name: Debug file structure
+        run: |
+          echo "Current directory: $(pwd)"
+          ls -R
         
       - name: 'Deploy to Azure Functions'
         uses: Azure/functions-action@v1
@@ -76,5 +84,6 @@ jobs:
           # backend ではなく . (今いる場所) を指定
           package: '.' 
           publish-profile: ${{ secrets.AZUREAPPSERVICE_PUBLISHPROFILE_43E781FD13634D8D834EB60767B1FFFB }}
+
 
 
