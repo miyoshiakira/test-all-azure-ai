@@ -9,15 +9,16 @@ class Chunk:
     text: str
     chunk_id: str  # 例: "page_1", "slide_3", "sheet_売上"
     chunk_type: str  # 例: "page", "slide", "sheet", "section"
+    category: str = ""  # カテゴリ（仕事, 家族, 趣味 など）- 後でAIが設定
 
 
 class TextExtractor:
     """各種ファイル形式からテキストを抽出するサービス"""
 
-    # チャンクの設定
-    MAX_CHUNK_SIZE = 500      # チャンクの最大文字数
-    MIN_CHUNK_SIZE = 100      # チャンクの最小文字数
-    OVERLAP_SIZE = 50         # チャンク間のオーバーラップ文字数
+    # チャンクの設定（セマンティック検索最適化: 1チャンク = 1トピック）
+    MAX_CHUNK_SIZE = 200      # チャンクの最大文字数（小さくして1トピックに）
+    MIN_CHUNK_SIZE = 50       # チャンクの最小文字数
+    OVERLAP_SIZE = 30         # チャンク間のオーバーラップ文字数
 
     @staticmethod
     def extract_chunks(file_content: bytes, file_name: str, content_type: str = "") -> Tuple[List[Chunk], str]:
@@ -237,8 +238,50 @@ class TextExtractor:
         return [s.strip() for s in sentences if s.strip()]
 
     @staticmethod
+    def _split_by_topic(text: str) -> List[str]:
+        """テキストをトピック（セクション/改行/見出し）単位で分割"""
+        import re
+
+        # 優先度1: 見出しパターンで分割（■、●、【】、#、数字. など）
+        # 優先度2: 空行（2連続改行）で分割
+        # 優先度3: 単一改行で分割
+
+        # 見出しパターン
+        heading_pattern = r'\n(?=(?:■|●|◆|▼|【|#|[0-9０-９]+[.．、)）]|\d+\.\s))'
+
+        # まず見出しで分割
+        sections = re.split(heading_pattern, text)
+
+        result = []
+        for section in sections:
+            section = section.strip()
+            if not section:
+                continue
+
+            # セクションが大きすぎる場合は空行で分割
+            if len(section) > TextExtractor.MAX_CHUNK_SIZE:
+                paragraphs = section.split('\n\n')
+                for para in paragraphs:
+                    para = para.strip()
+                    if not para:
+                        continue
+                    # まだ大きすぎる場合は単一改行で分割
+                    if len(para) > TextExtractor.MAX_CHUNK_SIZE:
+                        lines = para.split('\n')
+                        for line in lines:
+                            line = line.strip()
+                            if line:
+                                result.append(line)
+                    else:
+                        result.append(para)
+            else:
+                result.append(section)
+
+        return result
+
+    @staticmethod
     def _split_text_to_chunks(text: str, prefix: str = "") -> List[Chunk]:
-        """テキストを賢くチャンクに分割（文境界を尊重、オーバーラップ付き）"""
+        """テキストをトピック単位で分割（セマンティック検索最適化）"""
 
         # 短いテキストはそのまま返す
         if len(text) <= TextExtractor.MAX_CHUNK_SIZE:
@@ -248,33 +291,29 @@ class TextExtractor:
         chunks = []
         chunk_num = 1
 
-        # まず段落で分割
-        paragraphs = text.split('\n\n')
-        paragraphs = [p.strip() for p in paragraphs if p.strip()]
+        # トピック単位で分割
+        topics = TextExtractor._split_by_topic(text)
 
         current_chunk = ""
-        overlap_text = ""  # 前のチャンクの末尾（オーバーラップ用）
+        overlap_text = ""
 
-        for para in paragraphs:
-            # 段落が長すぎる場合は文単位で分割
-            if len(para) > TextExtractor.MAX_CHUNK_SIZE:
-                sentences = TextExtractor._split_into_sentences(para)
+        for topic in topics:
+            # トピックがまだ大きすぎる場合は文単位で分割
+            if len(topic) > TextExtractor.MAX_CHUNK_SIZE:
+                sentences = TextExtractor._split_into_sentences(topic)
 
                 for sentence in sentences:
-                    # 現在のチャンクに追加できるか確認
                     test_text = current_chunk + (" " if current_chunk else "") + sentence
 
                     if len(test_text) > TextExtractor.MAX_CHUNK_SIZE and current_chunk:
-                        # チャンクを保存
                         header = f"[{prefix} - {chunk_num}]\n\n" if prefix else ""
                         full_text = overlap_text + current_chunk if overlap_text else current_chunk
                         chunks.append(Chunk(
                             text=f"{header}{full_text}",
                             chunk_id=f"chunk_{chunk_num}",
-                            chunk_type="text"
+                            chunk_type="topic"
                         ))
 
-                        # オーバーラップ用に末尾を保存
                         overlap_text = current_chunk[-TextExtractor.OVERLAP_SIZE:] if len(current_chunk) > TextExtractor.OVERLAP_SIZE else current_chunk
                         overlap_text = "..." + overlap_text + " "
 
@@ -283,25 +322,24 @@ class TextExtractor:
                     else:
                         current_chunk = test_text
             else:
-                # 段落を追加
-                test_text = current_chunk + ("\n\n" if current_chunk else "") + para
+                # トピックをそのままチャンクとして追加（理想的なケース）
+                test_text = current_chunk + ("\n\n" if current_chunk else "") + topic
 
                 if len(test_text) > TextExtractor.MAX_CHUNK_SIZE and current_chunk:
-                    # チャンクを保存
+                    # 現在のチャンクを保存
                     header = f"[{prefix} - {chunk_num}]\n\n" if prefix else ""
                     full_text = overlap_text + current_chunk if overlap_text else current_chunk
                     chunks.append(Chunk(
                         text=f"{header}{full_text}",
                         chunk_id=f"chunk_{chunk_num}",
-                        chunk_type="text"
+                        chunk_type="topic"
                     ))
 
-                    # オーバーラップ用に末尾を保存
                     overlap_text = current_chunk[-TextExtractor.OVERLAP_SIZE:] if len(current_chunk) > TextExtractor.OVERLAP_SIZE else current_chunk
                     overlap_text = "..." + overlap_text + " "
 
                     chunk_num += 1
-                    current_chunk = para
+                    current_chunk = topic
                 else:
                     current_chunk = test_text
 
@@ -312,10 +350,9 @@ class TextExtractor:
             chunks.append(Chunk(
                 text=f"{header}{full_text}",
                 chunk_id=f"chunk_{chunk_num}",
-                chunk_type="text"
+                chunk_type="topic"
             ))
         elif current_chunk and chunks:
-            # 短すぎる場合は前のチャンクに追加
             last_chunk = chunks[-1]
             chunks[-1] = Chunk(
                 text=last_chunk.text + "\n\n" + current_chunk,
@@ -323,12 +360,11 @@ class TextExtractor:
                 chunk_type=last_chunk.chunk_type
             )
         elif current_chunk:
-            # 最初で唯一のチャンク
             header = f"[{prefix}]\n\n" if prefix else ""
             chunks.append(Chunk(
                 text=f"{header}{current_chunk}",
                 chunk_id="chunk_1",
-                chunk_type="text"
+                chunk_type="topic"
             ))
 
         return chunks

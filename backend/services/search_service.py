@@ -11,6 +11,10 @@ from azure.search.documents.indexes.models import (
     HnswAlgorithmConfiguration,
     VectorSearchProfile,
     SearchField,
+    SemanticConfiguration,
+    SemanticField,
+    SemanticPrioritizedFields,
+    SemanticSearch,
 )
 from typing import List, Optional
 
@@ -47,6 +51,8 @@ class SearchService:
             SearchableField(name="content", type=SearchFieldDataType.String),
             SimpleField(name="file_name", type=SearchFieldDataType.String, filterable=True),
             SimpleField(name="upload_date", type=SearchFieldDataType.DateTimeOffset, filterable=True, sortable=True),
+            # カテゴリフィールド（セマンティック検索のキーワードとして使用）
+            SearchableField(name="category", type=SearchFieldDataType.String, filterable=True, facetable=True),
             SearchField(
                 name="content_vector",
                 type=SearchFieldDataType.Collection(SearchFieldDataType.Single),
@@ -68,16 +74,29 @@ class SearchService:
             ]
         )
 
+        # Semantic configuration（タイトル、コンテンツ、キーワードを設定）
+        semantic_config = SemanticConfiguration(
+            name="test-all-ai",
+            prioritized_fields=SemanticPrioritizedFields(
+                title_field=SemanticField(field_name="title"),
+                content_fields=[SemanticField(field_name="content")],
+                keywords_fields=[SemanticField(field_name="category")]
+            )
+        )
+
+        semantic_search = SemanticSearch(configurations=[semantic_config])
+
         index = SearchIndex(
             name=self.index_name,
             fields=fields,
-            vector_search=vector_search
+            vector_search=vector_search,
+            semantic_search=semantic_search
         )
 
         self.index_client.create_or_update_index(index)
         return True
 
-    def index_document(self, doc_id: str, title: str, content: str, file_name: str, embedding: List[float]) -> dict:
+    def index_document(self, doc_id: str, title: str, content: str, file_name: str, embedding: List[float], category: str = "") -> dict:
         """Index a document in Azure Search"""
         if not self.search_client:
             raise Exception("Azure Search is not configured")
@@ -90,6 +109,7 @@ class SearchService:
             "content": content,
             "file_name": file_name,
             "upload_date": datetime.now(timezone.utc).isoformat(),
+            "category": category,
             "content_vector": embedding
         }
 
@@ -103,7 +123,7 @@ class SearchService:
 
         results = self.search_client.search(
             search_text=query,
-            select=["id", "title", "content", "file_name", "upload_date"],
+            select=["id", "title", "content", "file_name", "upload_date", "category"],
             top=top
         )
 
@@ -114,6 +134,7 @@ class SearchService:
                 "content": doc["content"][:500] + "..." if len(doc["content"]) > 500 else doc["content"],
                 "file_name": doc["file_name"],
                 "upload_date": doc.get("upload_date"),
+                "category": doc.get("category", ""),
                 "score": doc.get("@search.score", 0)
             }
             for doc in results
@@ -135,7 +156,7 @@ class SearchService:
         results = self.search_client.search(
             search_text=None,
             vector_queries=[vector_query],
-            select=["id", "title", "content", "file_name", "upload_date"],
+            select=["id", "title", "content", "file_name", "upload_date", "category"],
             top=top
         )
 
@@ -146,13 +167,14 @@ class SearchService:
                 "content": doc["content"][:500] + "..." if len(doc["content"]) > 500 else doc["content"],
                 "file_name": doc["file_name"],
                 "upload_date": doc.get("upload_date"),
+                "category": doc.get("category", ""),
                 "score": doc.get("@search.score", 0)
             }
             for doc in results
         ]
 
-    def hybrid_search(self, query: str, query_vector: List[float], top: int = 5) -> List[dict]:
-        """Hybrid search combining full-text and vector search"""
+    def hybrid_search(self, query: str, query_vector: List[float], top: int = 5, use_semantic: bool = False) -> List[dict]:
+        """Hybrid search combining full-text, vector, and optionally semantic search"""
         if not self.search_client:
             raise Exception("Azure Search is not configured")
 
@@ -164,12 +186,20 @@ class SearchService:
             fields="content_vector"
         )
 
-        results = self.search_client.search(
-            search_text=query,
-            vector_queries=[vector_query],
-            select=["id", "title", "content", "file_name", "upload_date"],
-            top=top
-        )
+        # 検索パラメータを構築
+        search_params = {
+            "search_text": query,
+            "vector_queries": [vector_query],
+            "select": ["id", "title", "content", "file_name", "upload_date", "category"],
+            "top": top
+        }
+
+        # セマンティック検索を有効にする場合
+        if use_semantic:
+            search_params["query_type"] = "semantic"
+            search_params["semantic_configuration_name"] = "test-all-ai"
+
+        results = self.search_client.search(**search_params)
 
         return [
             {
@@ -178,7 +208,9 @@ class SearchService:
                 "content": doc["content"][:500] + "..." if len(doc["content"]) > 500 else doc["content"],
                 "file_name": doc["file_name"],
                 "upload_date": doc.get("upload_date"),
-                "score": doc.get("@search.score", 0)
+                "category": doc.get("category", ""),
+                "score": doc.get("@search.score", 0),
+                "reranker_score": doc.get("@search.reranker_score") if use_semantic else None
             }
             for doc in results
         ]

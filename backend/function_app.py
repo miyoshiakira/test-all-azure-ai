@@ -54,6 +54,7 @@ class ChatMessage(BaseModel):
 class ChatRequest(BaseModel):
     messages: List[ChatMessage]
     use_search: bool = False
+    use_semantic: bool = False
 
 
 class SummarizeRequest(BaseModel):
@@ -98,28 +99,42 @@ async def upload_document(file: UploadFile = File(...)):
         )
         print(f"[{file_type}] {file_name}: {len(chunks)} chunks extracted")
 
-        # Index each chunk separately
+        # Index each chunk separately with AI-generated title and category
         indexed_count = 0
         chunk_results = []
 
         for chunk in chunks:
             doc_id = str(uuid.uuid4())
             try:
+                # AIでタイトルとカテゴリを生成
+                try:
+                    ai_title = openai_service.generate_chunk_title(chunk.text)
+                except Exception:
+                    ai_title = f"{file_name} - {chunk.chunk_id}"
+
+                try:
+                    ai_category = openai_service.categorize_chunk(chunk.text)
+                except Exception:
+                    ai_category = "その他"
+
                 embedding = openai_service.generate_embedding(chunk.text)
                 search_service.index_document(
                     doc_id=doc_id,
-                    title=f"{file_name} - {chunk.chunk_id}",
+                    title=ai_title,
                     content=chunk.text,
                     file_name=file_name,
-                    embedding=embedding
+                    embedding=embedding,
+                    category=ai_category
                 )
                 indexed_count += 1
                 chunk_results.append({
                     "chunk_id": chunk.chunk_id,
                     "status": "indexed",
-                    "chars": len(chunk.text)
+                    "chars": len(chunk.text),
+                    "title": ai_title,
+                    "category": ai_category
                 })
-                print(f"  [OK] {chunk.chunk_id}: {len(chunk.text)} chars")
+                print(f"  [OK] {chunk.chunk_id}: {len(chunk.text)} chars | {ai_title} | {ai_category}")
             except Exception as e:
                 chunk_results.append({
                     "chunk_id": chunk.chunk_id,
@@ -236,7 +251,8 @@ async def chat(request: ChatRequest):
                 results = search_service.hybrid_search(
                     query=last_message,
                     query_vector=embedding,
-                    top=5
+                    top=5,
+                    use_semantic=request.use_semantic
                 )
                 context = "\n\n---\n\n".join([r["content"] for r in results])
             except Exception:
@@ -328,22 +344,34 @@ async def reindex_all_documents():
                 chunks, file_type = TextExtractor.extract_chunks(content, file_name, "")
                 print(f"  [{file_type}] {len(chunks)} chunks")
 
-                # Index each chunk
+                # Index each chunk with AI-generated title and category
                 file_indexed = 0
                 for chunk in chunks:
                     doc_id = str(uuid.uuid4())
                     try:
+                        # AIでタイトルとカテゴリを生成
+                        try:
+                            ai_title = openai_service.generate_chunk_title(chunk.text)
+                        except Exception:
+                            ai_title = f"{file_name} - {chunk.chunk_id}"
+
+                        try:
+                            ai_category = openai_service.categorize_chunk(chunk.text)
+                        except Exception:
+                            ai_category = "その他"
+
                         embedding = openai_service.generate_embedding(chunk.text)
                         search_service.index_document(
                             doc_id=doc_id,
-                            title=f"{file_name} - {chunk.chunk_id}",
+                            title=ai_title,
                             content=chunk.text,
                             file_name=file_name,
-                            embedding=embedding
+                            embedding=embedding,
+                            category=ai_category
                         )
                         file_indexed += 1
                         indexed_chunks += 1
-                        print(f"    [OK] {chunk.chunk_id}: {len(chunk.text)} chars")
+                        print(f"    [OK] {chunk.chunk_id}: {len(chunk.text)} chars | {ai_title} | {ai_category}")
                     except Exception as e:
                         print(f"    [WARN] {chunk.chunk_id}: {e}")
 

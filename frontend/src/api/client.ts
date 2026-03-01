@@ -92,10 +92,10 @@ class ApiClient {
     });
   }
 
-  async chat(messages: ChatMessage[], useSearch: boolean = false): Promise<{ response: string }> {
+  async chat(messages: ChatMessage[], useSearch: boolean = false, useSemantic: boolean = false): Promise<{ response: string }> {
     return this.request('/ai/chat', {
       method: 'POST',
-      body: JSON.stringify({ messages, use_search: useSearch }),
+      body: JSON.stringify({ messages, use_search: useSearch, use_semantic: useSemantic }),
     });
   }
 

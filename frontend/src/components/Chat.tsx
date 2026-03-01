@@ -5,6 +5,7 @@ export function Chat() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
   const [useSearch, setUseSearch] = useState(true);
+  const [useSemantic, setUseSemantic] = useState(true);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -28,7 +29,7 @@ export function Chat() {
     setError(null);
 
     try {
-      const response = await apiClient.chat(newMessages, useSearch);
+      const response = await apiClient.chat(newMessages, useSearch, useSemantic);
       const assistantMessage: ChatMessage = { role: 'assistant', content: response.response };
       setMessages([...newMessages, assistantMessage]);
     } catch (err) {
@@ -107,7 +108,20 @@ export function Chat() {
               />
               <span className="toggle-slider"></span>
             </span>
-            <span>📚 ドキュメント検索を使用（RAG）</span>
+            <span>📚 ドキュメント検索（RAG）</span>
+          </label>
+
+          <label className="toggle-label" style={{ opacity: useSearch ? 1 : 0.5 }}>
+            <span className="toggle">
+              <input
+                type="checkbox"
+                checked={useSemantic}
+                onChange={(e) => setUseSemantic(e.target.checked)}
+                disabled={!useSearch}
+              />
+              <span className="toggle-slider"></span>
+            </span>
+            <span>🧠 セマンティック検索</span>
           </label>
 
           <button
