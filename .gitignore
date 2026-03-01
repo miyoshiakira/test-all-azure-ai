@@ -36,3 +36,4 @@ build/
 
 # Project notes with secrets
 構成プロンプト.txt
+logs/
