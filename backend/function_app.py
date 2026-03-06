@@ -10,7 +10,7 @@ import os
 # Load environment variables
 load_dotenv()
 
-from services import BlobService, OpenAIService, SearchService, TextExtractor
+from services import BlobService, OpenAIService, SearchService, TextExtractor, YankiService
 
 # Initialize FastAPI app
 fastapi_app = FastAPI(
@@ -32,6 +32,10 @@ fastapi_app.add_middleware(
 blob_service = BlobService()
 openai_service = OpenAIService()
 search_service = SearchService()
+yanki_service = YankiService()
+
+# Register tool handlers for OpenAI Function Calling
+openai_service.register_tool_handler("register_yanki", yanki_service.register_yanki)
 
 
 # Pydantic models
@@ -241,7 +245,7 @@ async def answer_question(request: QuestionRequest):
 
 @fastapi_app.post("/api/ai/chat")
 async def chat(request: ChatRequest):
-    """Chat with AI, optionally using document context"""
+    """Chat with AI, optionally using document context. Supports Function Calling for yanki registration."""
     try:
         context = None
         if request.use_search and request.messages:
@@ -259,8 +263,49 @@ async def chat(request: ChatRequest):
                 pass
 
         messages = [{"role": m.role, "content": m.content} for m in request.messages]
-        response = openai_service.chat(messages=messages, context=context)
-        return {"response": response}
+
+        # Use chat_with_tools to enable Function Calling
+        result = openai_service.chat_with_tools(messages=messages, context=context)
+
+        return {
+            "response": result["response"],
+            "tool_calls": result.get("tool_calls", [])
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# Yanki endpoints
+@fastapi_app.get("/api/yankis")
+async def list_yankis():
+    """Get all registered yankis"""
+    try:
+        yankis = yanki_service.get_all_yankis()
+        return {"yankis": yankis}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@fastapi_app.get("/api/yankis/{user_id}")
+async def get_yanki(user_id: int):
+    """Get a specific yanki by ID"""
+    try:
+        yanki = yanki_service.get_yanki_by_id(user_id)
+        if yanki:
+            return yanki
+        raise HTTPException(status_code=404, detail="Yanki not found")
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@fastapi_app.delete("/api/yankis/{user_id}")
+async def delete_yanki(user_id: int):
+    """Delete a yanki by ID"""
+    try:
+        result = yanki_service.delete_yanki(user_id)
+        return {"success": result}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -405,6 +450,6 @@ if __name__ == "__main__":
 
 # 変数名は必ず 'app'
 app = func.AsgiFunctionApp(
-    app=fastapi_app, 
+    app=fastapi_app,
     http_auth_level=func.AuthLevel.ANONYMOUS
 )

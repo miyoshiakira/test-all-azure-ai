@@ -20,6 +20,34 @@ export interface ChatMessage {
   content: string;
 }
 
+export interface ToolCall {
+  tool_name: string;
+  arguments: Record<string, unknown>;
+  result: {
+    success: boolean;
+    user_id?: number;
+    user_name?: string;
+    attack_power?: number;
+    others?: string | null;
+    message?: string;
+    error?: string;
+  };
+}
+
+export interface ChatResponse {
+  response: string;
+  tool_calls: ToolCall[];
+}
+
+export interface Yanki {
+  user_id: number;
+  user_name: string;
+  attack_power: number;
+  others: string | null;
+  created_at: string | null;
+  updated_at: string | null;
+}
+
 class ApiClient {
   private async request<T>(
     endpoint: string,
@@ -92,10 +120,25 @@ class ApiClient {
     });
   }
 
-  async chat(messages: ChatMessage[], useSearch: boolean = false, useSemantic: boolean = false): Promise<{ response: string }> {
+  async chat(messages: ChatMessage[], useSearch: boolean = false, useSemantic: boolean = false): Promise<ChatResponse> {
     return this.request('/ai/chat', {
       method: 'POST',
       body: JSON.stringify({ messages, use_search: useSearch, use_semantic: useSemantic }),
+    });
+  }
+
+  // Yanki endpoints
+  async listYankis(): Promise<{ yankis: Yanki[] }> {
+    return this.request('/yankis');
+  }
+
+  async getYanki(userId: number): Promise<Yanki> {
+    return this.request(`/yankis/${userId}`);
+  }
+
+  async deleteYanki(userId: number): Promise<{ success: boolean }> {
+    return this.request(`/yankis/${userId}`, {
+      method: 'DELETE',
     });
   }
 

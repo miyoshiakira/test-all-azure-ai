@@ -2,8 +2,9 @@ import { useState } from 'react';
 import { DocumentUpload } from './components/DocumentUpload';
 import { Chat } from './components/Chat';
 import { Admin } from './components/Admin';
+import { YankiList } from './components/YankiList';
 
-type SubPageType = 'upload' | 'admin' | null;
+type SubPageType = 'upload' | 'admin' | 'yanki' | null;
 
 function App() {
   const [subPage, setSubPage] = useState<SubPageType>(null);
@@ -27,6 +28,7 @@ function App() {
         <div className="panel">
           {subPage === 'upload' && <DocumentUpload />}
           {subPage === 'admin' && <Admin />}
+          {subPage === 'yanki' && <YankiList />}
         </div>
       </div>
     );
@@ -47,6 +49,12 @@ function App() {
           onClick={() => setSubPage('upload')}
         >
           📁 ドキュメント管理
+        </button>
+        <button
+          className="sub-nav-btn"
+          onClick={() => setSubPage('yanki')}
+        >
+          🔥 ヤンキー確認
         </button>
         <button
           className="sub-nav-btn"

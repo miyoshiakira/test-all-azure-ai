@@ -1,5 +1,11 @@
 import { useState, useRef, useEffect } from 'react';
-import { apiClient, ChatMessage } from '../api/client';
+import { apiClient, ChatMessage, ToolCall } from '../api/client';
+
+interface ToolNotification {
+  id: number;
+  toolCall: ToolCall;
+  visible: boolean;
+}
 
 export function Chat() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -8,7 +14,9 @@ export function Chat() {
   const [useSemantic, setUseSemantic] = useState(true);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [notifications, setNotifications] = useState<ToolNotification[]>([]);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const notificationIdRef = useRef(0);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -17,6 +25,22 @@ export function Chat() {
   useEffect(() => {
     scrollToBottom();
   }, [messages]);
+
+  const showToolNotification = (toolCall: ToolCall) => {
+    const id = ++notificationIdRef.current;
+    setNotifications(prev => [...prev, { id, toolCall, visible: true }]);
+
+    // 5秒後に通知を非表示にする
+    setTimeout(() => {
+      setNotifications(prev =>
+        prev.map(n => n.id === id ? { ...n, visible: false } : n)
+      );
+      // さらに0.5秒後に削除
+      setTimeout(() => {
+        setNotifications(prev => prev.filter(n => n.id !== id));
+      }, 500);
+    }, 5000);
+  };
 
   const handleSend = async () => {
     if (!input.trim() || loading) return;
@@ -32,6 +56,13 @@ export function Chat() {
       const response = await apiClient.chat(newMessages, useSearch, useSemantic);
       const assistantMessage: ChatMessage = { role: 'assistant', content: response.response };
       setMessages([...newMessages, assistantMessage]);
+
+      // Tool callsがあれば通知を表示
+      if (response.tool_calls && response.tool_calls.length > 0) {
+        response.tool_calls.forEach(tc => {
+          showToolNotification(tc);
+        });
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : '応答の取得に失敗しました');
     } finally {
@@ -51,8 +82,53 @@ export function Chat() {
     setError(null);
   };
 
+  const dismissNotification = (id: number) => {
+    setNotifications(prev =>
+      prev.map(n => n.id === id ? { ...n, visible: false } : n)
+    );
+    setTimeout(() => {
+      setNotifications(prev => prev.filter(n => n.id !== id));
+    }, 500);
+  };
+
   return (
     <div className="chat-container fade-in">
+      {/* ツール実行通知 */}
+      <div className="tool-notifications">
+        {notifications.map(({ id, toolCall, visible }) => (
+          <div
+            key={id}
+            className={`tool-notification ${visible ? 'show' : 'hide'} ${toolCall.result.success ? 'success' : 'error'}`}
+            onClick={() => dismissNotification(id)}
+          >
+            <div className="tool-notification-header">
+              {toolCall.result.success ? '✅' : '❌'}
+              <strong>
+                {toolCall.tool_name === 'register_yanki' ? '新規ヤンキー登録' : toolCall.tool_name}
+              </strong>
+            </div>
+            <div className="tool-notification-body">
+              {toolCall.result.success ? (
+                <>
+                  <div className="yanki-info">
+                    <span className="yanki-name">{toolCall.result.user_name}</span>
+                    <span className="yanki-power">戦闘力: {toolCall.result.attack_power}</span>
+                  </div>
+                  {toolCall.result.others && (
+                    <div className="yanki-others">{toolCall.result.others}</div>
+                  )}
+                </>
+              ) : (
+                <div className="tool-error">{toolCall.result.error || toolCall.result.message}</div>
+              )}
+            </div>
+            <div className="tool-notification-footer">
+              クリックで閉じる
+            </div>
+          </div>
+        ))}
+      </div>
+
       {error && <div className="error">{error}</div>}
 
       <div className="chat-messages">
@@ -66,6 +142,9 @@ export function Chat() {
               <p style={{ marginBottom: '8px' }}>💡 質問例:</p>
               <p>「この資料の要点を教えて」</p>
               <p>「〇〇について詳しく説明して」</p>
+              <p style={{ marginTop: '12px', color: 'var(--secondary)' }}>
+                🔥 ヤンキー登録: 「暴走太郎を戦闘力9500で登録して」
+              </p>
             </div>
           </div>
         ) : (

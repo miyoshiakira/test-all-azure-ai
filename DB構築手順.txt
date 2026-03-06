@@ -1,0 +1,23 @@
+  1. データベースセットアップ
+
+  Azure SQL Databaseで backend/sql/create_yankis_table.sql を実行してテーブルを作成
+
+  2. 環境変数設定
+
+  .env に以下を追加:
+  AZURE_SQL_SERVER=your-server.database.windows.net
+  AZURE_SQL_DATABASE=test-all-ai
+  AZURE_SQL_USERNAME=your-username
+  AZURE_SQL_PASSWORD=your-password
+
+  3. 依存関係インストール
+
+  pip install pyodbc
+
+  4. ヤンキー登録の使い方
+
+  チャットで以下のように話しかけると登録されます:
+  - 「暴走太郎を戦闘力9500で登録して」
+  - 「喧嘩花子、戦闘力8800、備考: レディース総長 を追加」
+
+  登録成功時は画面右上に通知が表示されます。
