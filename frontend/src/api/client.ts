@@ -27,7 +27,7 @@ export interface ToolCall {
     success: boolean;
     user_id?: number;
     user_name?: string;
-    attack_power?: number;
+    grade?: number;
     others?: string | null;
     message?: string;
     error?: string;
@@ -39,10 +39,10 @@ export interface ChatResponse {
   tool_calls: ToolCall[];
 }
 
-export interface Yanki {
+export interface Employee {
   user_id: number;
   user_name: string;
-  attack_power: number;
+  grade: number;
   others: string | null;
   created_at: string | null;
   updated_at: string | null;
@@ -127,17 +127,17 @@ class ApiClient {
     });
   }
 
-  // Yanki endpoints
-  async listYankis(): Promise<{ yankis: Yanki[] }> {
-    return this.request('/yankis');
+  // Employee endpoints
+  async listEmployees(): Promise<{ employees: Employee[] }> {
+    return this.request('/employees');
   }
 
-  async getYanki(userId: number): Promise<Yanki> {
-    return this.request(`/yankis/${userId}`);
+  async getEmployee(userId: number): Promise<Employee> {
+    return this.request(`/employees/${userId}`);
   }
 
-  async deleteYanki(userId: number): Promise<{ success: boolean }> {
-    return this.request(`/yankis/${userId}`, {
+  async deleteEmployee(userId: number): Promise<{ success: boolean }> {
+    return this.request(`/employees/${userId}`, {
       method: 'DELETE',
     });
   }

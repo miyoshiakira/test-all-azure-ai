@@ -1,9 +1,9 @@
 @echo off
-title NEURAL DOCS - Development Environment
+title Employee Search AI - Development Environment
 
 echo.
 echo ============================================================
-echo           NEURAL DOCS - Development Environment
+echo           Employee Search AI - Development Environment
 echo ============================================================
 echo   Backend:  http://localhost:7071
 echo   Frontend: http://localhost:3000
@@ -29,15 +29,20 @@ if %ERRORLEVEL% neq 0 (
     exit /b 1
 )
 
-echo [1/4] Checking backend dependencies...
+echo [1/4] Setting up backend virtual environment...
 cd /d "%ROOT_DIR%backend"
 if not exist ".venv" (
     echo       Creating virtual environment...
     python -m venv .venv
 )
 
+echo       Installing backend dependencies...
+call .venv\Scripts\activate.bat
+pip install -r requirements.txt -q
+call .venv\Scripts\deactivate.bat
+
 echo [2/4] Starting Backend Server...
-start "NEURAL DOCS - Backend" cmd /k "cd /d "%ROOT_DIR%backend" && .venv\Scripts\activate 2>nul || echo Using global Python && pip install -r requirements.txt -q && echo. && echo ======================================== && echo   Backend running on http://localhost:7071 && echo ======================================== && echo. && python main.py"
+start "Employee Search AI - Backend" cmd /k "cd /d "%ROOT_DIR%backend" && call .venv\Scripts\activate.bat && echo. && echo ======================================== && echo   Backend running on http://localhost:7071 && echo ======================================== && echo. && python function_app.py"
 
 echo [3/4] Checking frontend dependencies...
 cd /d "%ROOT_DIR%frontend"
@@ -48,7 +53,7 @@ if not exist "node_modules" (
 
 echo [4/4] Starting Frontend Server...
 timeout /t 3 /nobreak > nul
-start "NEURAL DOCS - Frontend" cmd /k "cd /d "%ROOT_DIR%frontend" && echo. && echo ======================================== && echo   Frontend running on http://localhost:3000 && echo ======================================== && echo. && npm run dev"
+start "Employee Search AI - Frontend" cmd /k "cd /d "%ROOT_DIR%frontend" && echo. && echo ======================================== && echo   Frontend running on http://localhost:3000 && echo ======================================== && echo. && npm run dev"
 
 echo.
 echo ============================================================

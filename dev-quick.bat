@@ -1,9 +1,9 @@
 @echo off
-title NEURAL DOCS - Quick Start
+title Employee Search AI - Quick Start
 
 echo.
 echo ============================================================
-echo        NEURAL DOCS - Quick Start (Skip Install)
+echo        Employee Search AI - Quick Start (Skip Install)
 echo ============================================================
 echo   Backend:  http://localhost:7071
 echo   Frontend: http://localhost:3000
@@ -13,11 +13,11 @@ echo.
 set "ROOT_DIR=%~dp0"
 
 echo [1/2] Starting Backend...
-start "NEURAL DOCS - Backend" cmd /k "cd /d "%ROOT_DIR%backend" && python main.py"
+start "Employee Search AI - Backend" cmd /k "cd /d "%ROOT_DIR%backend" && call .venv\Scripts\activate.bat && python function_app.py"
 
 echo [2/2] Starting Frontend...
 timeout /t 2 /nobreak > nul
-start "NEURAL DOCS - Frontend" cmd /k "cd /d "%ROOT_DIR%frontend" && npm run dev"
+start "Employee Search AI - Frontend" cmd /k "cd /d "%ROOT_DIR%frontend" && npm run dev"
 
 timeout /t 3 /nobreak > nul
 start http://localhost:3000

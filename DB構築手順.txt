@@ -1,6 +1,6 @@
   1. データベースセットアップ
 
-  Azure SQL Databaseで backend/sql/create_yankis_table.sql を実行してテーブルを作成
+  Azure SQL Databaseで backend/sql/create_employees_table.sql を実行してテーブルを作成
 
   2. 環境変数設定
 

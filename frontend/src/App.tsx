@@ -2,9 +2,9 @@ import { useState } from 'react';
 import { DocumentUpload } from './components/DocumentUpload';
 import { Chat } from './components/Chat';
 import { Admin } from './components/Admin';
-import { YankiList } from './components/YankiList';
+import { EmployeeList } from './components/EmployeeList';
 
-type SubPageType = 'upload' | 'admin' | 'yanki' | null;
+type SubPageType = 'upload' | 'admin' | 'employee' | null;
 
 function App() {
   const [subPage, setSubPage] = useState<SubPageType>(null);
@@ -21,14 +21,14 @@ function App() {
           <button className="back-button" onClick={handleBack}>
             ← 戻る
           </button>
-          <h1>社内検索AI</h1>
+          <h1>社員検索AI</h1>
           <div className="header-spacer"></div>
         </header>
 
         <div className="panel">
           {subPage === 'upload' && <DocumentUpload />}
           {subPage === 'admin' && <Admin />}
-          {subPage === 'yanki' && <YankiList />}
+          {subPage === 'employee' && <EmployeeList />}
         </div>
       </div>
     );
@@ -39,8 +39,8 @@ function App() {
     <div className="app">
       <header className="header">
         <div className="ai-icon"></div>
-        <h1>社内検索AI</h1>
-        <p>社内ドキュメントをAIで検索・質問</p>
+        <h1>社員検索AI</h1>
+        <p>社員情報をAIで検索・登録</p>
       </header>
 
       <div className="sub-nav">
@@ -48,19 +48,19 @@ function App() {
           className="sub-nav-btn"
           onClick={() => setSubPage('upload')}
         >
-          📁 ドキュメント管理
+          ドキュメント管理
         </button>
         <button
           className="sub-nav-btn"
-          onClick={() => setSubPage('yanki')}
+          onClick={() => setSubPage('employee')}
         >
-          🔥 ヤンキー確認
+          社員一覧
         </button>
         <button
           className="sub-nav-btn"
           onClick={() => setSubPage('admin')}
         >
-          ⚙️ 設定
+          設定
         </button>
       </div>
 

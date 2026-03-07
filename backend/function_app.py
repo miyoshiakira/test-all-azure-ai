@@ -10,7 +10,7 @@ import os
 # Load environment variables
 load_dotenv()
 
-from services import BlobService, OpenAIService, SearchService, TextExtractor, YankiService
+from services import BlobService, OpenAIService, SearchService, TextExtractor, EmployeeService
 
 # Initialize FastAPI app
 fastapi_app = FastAPI(
@@ -32,10 +32,12 @@ fastapi_app.add_middleware(
 blob_service = BlobService()
 openai_service = OpenAIService()
 search_service = SearchService()
-yanki_service = YankiService()
+employee_service = EmployeeService()
 
 # Register tool handlers for OpenAI Function Calling
-openai_service.register_tool_handler("register_yanki", yanki_service.register_yanki)
+openai_service.register_tool_handler("register_employee", employee_service.register_employee)
+openai_service.register_tool_handler("get_employees", employee_service.get_employees_for_tool)
+openai_service.register_tool_handler("delete_employee", employee_service.delete_employee_for_tool)
 
 
 # Pydantic models
@@ -245,7 +247,7 @@ async def answer_question(request: QuestionRequest):
 
 @fastapi_app.post("/api/ai/chat")
 async def chat(request: ChatRequest):
-    """Chat with AI, optionally using document context. Supports Function Calling for yanki registration."""
+    """Chat with AI, optionally using document context. Supports Function Calling for employee registration."""
     try:
         context = None
         if request.use_search and request.messages:
@@ -275,36 +277,36 @@ async def chat(request: ChatRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-# Yanki endpoints
-@fastapi_app.get("/api/yankis")
-async def list_yankis():
-    """Get all registered yankis"""
+# Employee endpoints
+@fastapi_app.get("/api/employees")
+async def list_employees():
+    """Get all registered employees"""
     try:
-        yankis = yanki_service.get_all_yankis()
-        return {"yankis": yankis}
+        employees = employee_service.get_all_employees()
+        return {"employees": employees}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@fastapi_app.get("/api/yankis/{user_id}")
-async def get_yanki(user_id: int):
-    """Get a specific yanki by ID"""
+@fastapi_app.get("/api/employees/{user_id}")
+async def get_employee(user_id: int):
+    """Get a specific employee by ID"""
     try:
-        yanki = yanki_service.get_yanki_by_id(user_id)
-        if yanki:
-            return yanki
-        raise HTTPException(status_code=404, detail="Yanki not found")
+        employee = employee_service.get_employee_by_id(user_id)
+        if employee:
+            return employee
+        raise HTTPException(status_code=404, detail="Employee not found")
     except HTTPException:
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@fastapi_app.delete("/api/yankis/{user_id}")
-async def delete_yanki(user_id: int):
-    """Delete a yanki by ID"""
+@fastapi_app.delete("/api/employees/{user_id}")
+async def delete_employee(user_id: int):
+    """Delete an employee by ID"""
     try:
-        result = yanki_service.delete_yanki(user_id)
+        result = employee_service.delete_employee(user_id)
         return {"success": result}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -444,12 +446,13 @@ async def reindex_all_documents():
         raise HTTPException(status_code=500, detail=str(e))
 
 
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=7071)
-
-# 変数名は必ず 'app'
+# Azure Functions用の変数（必ず 'app' という名前）
 app = func.AsgiFunctionApp(
     app=fastapi_app,
     http_auth_level=func.AuthLevel.ANONYMOUS
 )
+
+# ローカル開発用
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(fastapi_app, host="0.0.0.0", port=7071)

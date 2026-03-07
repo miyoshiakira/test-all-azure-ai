@@ -4,30 +4,73 @@ from openai import AzureOpenAI
 from typing import List, Optional, Dict, Any, Callable
 
 
-# ヤンキー登録用のtools定義
-YANKI_TOOLS = [
+# 社員用のtools定義
+EMPLOYEE_TOOLS = [
     {
         "type": "function",
         "function": {
-            "name": "register_yanki",
-            "description": "新規ヤンキー情報をデータベースに登録します。ユーザーが「ヤンキーを登録したい」「新しいヤンキーを追加して」などと言った場合に使用します。",
+            "name": "register_employee",
+            "description": "新規社員情報をデータベースに登録します。ユーザーが「社員を登録したい」「新しい社員を追加して」などと言った場合に使用します。",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "user_name": {
                         "type": "string",
-                        "description": "ヤンキーの名前（例: 暴走太郎、喧嘩花子）"
+                        "description": "社員の氏名（例: 山田太郎、佐藤花子）"
                     },
-                    "attack_power": {
+                    "grade": {
                         "type": "integer",
-                        "description": "戦闘力（0以上の整数）"
+                        "description": "グレード（0以上の整数、役職レベルを表す）"
                     },
                     "others": {
                         "type": "string",
                         "description": "備考（任意）"
                     }
                 },
-                "required": ["user_name", "attack_power"]
+                "required": ["user_name", "grade"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_employees",
+            "description": "登録されている社員一覧を取得します。ユーザーが「社員一覧を見せて」「登録されてる社員は？」「トップ5の社員を教えて」「グレードが低い順に3人」などと言った場合に使用します。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "limit": {
+                        "type": "integer",
+                        "description": "取得する人数（デフォルト: 10、最大: 50）"
+                    },
+                    "sort_order": {
+                        "type": "string",
+                        "enum": ["desc", "asc"],
+                        "description": "グレードのソート順。desc=降順（高い順）、asc=昇順（低い順）。デフォルト: desc"
+                    }
+                },
+                "required": []
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "delete_employee",
+            "description": "社員情報をデータベースから削除します。ユーザーが「社員を削除して」「〇〇を削除して」「ID:XXの社員を消して」などと言った場合に使用します。削除前に確認を取ることを推奨します。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "user_id": {
+                        "type": "integer",
+                        "description": "削除する社員のID"
+                    },
+                    "user_name": {
+                        "type": "string",
+                        "description": "削除する社員の名前（IDが不明な場合に名前で検索して削除）"
+                    }
+                },
+                "required": []
             }
         }
     }
@@ -198,10 +241,15 @@ class OpenAIService:
 
         system_message = """You are a helpful assistant. Answer in Japanese.
 あなたは以下の機能を持っています：
-- register_yanki: 新規ヤンキー情報をデータベースに登録する
+- register_employee: 新規社員情報をデータベースに登録する
+- get_employees: 登録されている社員一覧を取得する（人数や並び順を指定可能）
+- delete_employee: 社員情報をデータベースから削除する（IDまたは名前で指定）
 
-ユーザーがヤンキーの登録を依頼した場合は、必ずregister_yankiツールを使用してください。
-登録には「名前」と「戦闘力」が必要です。備考は任意です。"""
+ユーザーが社員の登録を依頼した場合は、register_employeeツールを使用してください。
+ユーザーが社員一覧の確認を依頼した場合は、get_employeesツールを使用してください。
+ユーザーが社員の削除を依頼した場合は、delete_employeeツールを使用してください。
+「トップ5」「上位3名」などは人数指定、「低い順」は昇順（asc）を指定してください。
+削除を実行する前に、対象の社員情報を確認してからユーザーに削除してよいか確認してください。"""
 
         if context:
             system_message += f"\n\nUse the following context to help answer questions:\n{context}"
@@ -212,7 +260,7 @@ class OpenAIService:
         response = self.client.chat.completions.create(
             model=self.model,
             messages=all_messages,
-            tools=YANKI_TOOLS,
+            tools=EMPLOYEE_TOOLS,
             tool_choice="auto",
             max_tokens=2000,
             temperature=0.7

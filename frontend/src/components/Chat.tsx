@@ -104,18 +104,23 @@ export function Chat() {
             <div className="tool-notification-header">
               {toolCall.result.success ? '✅' : '❌'}
               <strong>
-                {toolCall.tool_name === 'register_yanki' ? '新規ヤンキー登録' : toolCall.tool_name}
+                {toolCall.tool_name === 'register_employee' ? '新規社員登録' :
+                 toolCall.tool_name === 'delete_employee' ? '社員削除' :
+                 toolCall.tool_name === 'get_employees' ? '社員一覧取得' : toolCall.tool_name}
               </strong>
             </div>
             <div className="tool-notification-body">
               {toolCall.result.success ? (
                 <>
-                  <div className="yanki-info">
-                    <span className="yanki-name">{toolCall.result.user_name}</span>
-                    <span className="yanki-power">戦闘力: {toolCall.result.attack_power}</span>
+                  <div className="employee-info">
+                    <span className="employee-name">{toolCall.result.user_name}</span>
+                    <span className="employee-grade">グレード: {toolCall.result.grade}</span>
                   </div>
                   {toolCall.result.others && (
-                    <div className="yanki-others">{toolCall.result.others}</div>
+                    <div className="employee-others">{toolCall.result.others}</div>
+                  )}
+                  {toolCall.result.message && (
+                    <div className="employee-others">{toolCall.result.message}</div>
                   )}
                 </>
               ) : (
@@ -143,7 +148,7 @@ export function Chat() {
               <p>「この資料の要点を教えて」</p>
               <p>「〇〇について詳しく説明して」</p>
               <p style={{ marginTop: '12px', color: 'var(--secondary)' }}>
-                🔥 ヤンキー登録: 「暴走太郎を戦闘力9500で登録して」
+                👤 社員登録: 「山田太郎をグレード5000で登録して」
               </p>
             </div>
           </div>
