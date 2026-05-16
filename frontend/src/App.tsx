@@ -1,73 +1,60 @@
-import { useState } from 'react';
-import { DocumentUpload } from './components/DocumentUpload';
-import { Chat } from './components/Chat';
-import { Admin } from './components/Admin';
-import { EmployeeList } from './components/EmployeeList';
+import { BrowserRouter, Routes, Route, NavLink } from 'react-router-dom';
+import Dashboard from './components/Dashboard';
+import NormalChat from './components/NormalChat';
+import ProposalGenerator from './components/ProposalGenerator';
+import CompetitorSearch from './components/CompetitorSearch';
+import DailyProcessResults from './components/DailyProcessResults';
 
-type SubPageType = 'upload' | 'admin' | 'employee' | null;
+const navItems = [
+  { to: '/', label: 'ダッシュボード', icon: 'dashboard' },
+  { to: '/chat', label: 'ノーマルチャット', icon: 'chat' },
+  { to: '/proposal', label: '企画書AI生成', icon: 'proposal' },
+  { to: '/competitor', label: '競合検索', icon: 'search' },
+  { to: '/daily', label: '日次処理結果', icon: 'daily' },
+];
 
 function App() {
-  const [subPage, setSubPage] = useState<SubPageType>(null);
-
-  const handleBack = () => {
-    setSubPage(null);
-  };
-
-  // サブページ表示時
-  if (subPage) {
-    return (
-      <div className="app">
-        <header className="header header-compact">
-          <button className="back-button" onClick={handleBack}>
-            ← 戻る
-          </button>
-          <h1>社員検索AI</h1>
-          <div className="header-spacer"></div>
-        </header>
-
-        <div className="panel">
-          {subPage === 'upload' && <DocumentUpload />}
-          {subPage === 'admin' && <Admin />}
-          {subPage === 'employee' && <EmployeeList />}
-        </div>
-      </div>
-    );
-  }
-
-  // メイン画面（チャット）
   return (
-    <div className="app">
-      <header className="header">
-        <div className="ai-icon"></div>
-        <h1>社員検索AI</h1>
-        <p>社員情報をAIで検索・登録</p>
-      </header>
-
-      <div className="sub-nav">
-        <button
-          className="sub-nav-btn"
-          onClick={() => setSubPage('upload')}
-        >
-          ドキュメント管理
-        </button>
-        <button
-          className="sub-nav-btn"
-          onClick={() => setSubPage('employee')}
-        >
-          社員一覧
-        </button>
-        <button
-          className="sub-nav-btn"
-          onClick={() => setSubPage('admin')}
-        >
-          設定
-        </button>
+    <BrowserRouter>
+      <div className="app-layout">
+        <aside className="sidebar">
+          <div className="sidebar-header">
+            <div className="sidebar-logo-icon">AI</div>
+            <h1 className="sidebar-title">AIチャットハブ</h1>
+          </div>
+          <nav className="sidebar-nav">
+            {navItems.map((item) => (
+              <NavLink
+                key={item.to}
+                to={item.to}
+                end={item.to === '/'}
+                className={({ isActive }) =>
+                  `nav-link${isActive ? ' active' : ''}`
+                }
+              >
+                <span className={`nav-icon nav-icon-${item.icon}`}></span>
+                <span className="nav-label">{item.label}</span>
+              </NavLink>
+            ))}
+          </nav>
+          <div className="sidebar-footer">
+            <div className="user-info">
+              <div className="user-avatar">U</div>
+              <span className="user-name">社員太郎</span>
+            </div>
+          </div>
+        </aside>
+        <main className="main-content">
+          <Routes>
+            <Route path="/" element={<Dashboard />} />
+            <Route path="/chat" element={<NormalChat />} />
+            <Route path="/proposal" element={<ProposalGenerator />} />
+            <Route path="/competitor" element={<CompetitorSearch />} />
+            <Route path="/daily" element={<DailyProcessResults />} />
+          </Routes>
+        </main>
       </div>
-
-      <div className="panel main-panel">
-        <Chat />
-      </div>
-    </div>
+    </BrowserRouter>
   );
 }
 
