@@ -1,25 +1,23 @@
 import azure.functions as func
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import Response
 from pydantic import BaseModel
 from typing import List, Optional
 from dotenv import load_dotenv
 import uuid
 import os
 
-# Load environment variables
 load_dotenv()
 
-from services import BlobService, OpenAIService, SearchService, TextExtractor, EmployeeService
+from services import BlobService, OpenAIService, SearchService, TextExtractor, ProposalService
 
-# Initialize FastAPI app
 fastapi_app = FastAPI(
-    title="Document Analysis API",
-    description="API for document upload, search, and AI-powered analysis",
-    version="1.0.0"
+    title="AI Chat Hub API",
+    description="Semantic search chat + file management with auto-indexing",
+    version="2.0.0",
 )
 
-# CORS configuration
 fastapi_app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -28,91 +26,216 @@ fastapi_app.add_middleware(
     allow_headers=["*"],
 )
 
-# Initialize services
 blob_service = BlobService()
 openai_service = OpenAIService()
 search_service = SearchService()
-employee_service = EmployeeService()
-
-# Register tool handlers for OpenAI Function Calling
-openai_service.register_tool_handler("register_employee", employee_service.register_employee)
-openai_service.register_tool_handler("get_employees", employee_service.get_employees_for_tool)
-openai_service.register_tool_handler("delete_employee", employee_service.delete_employee_for_tool)
+proposal_service = ProposalService()
 
 
-# Pydantic models
-class QuestionRequest(BaseModel):
-    question: str
-    context: Optional[str] = None
-
-
-class SearchRequest(BaseModel):
-    query: str
-    use_vector: bool = False
-    top: int = 5
-
+# --- Pydantic models ---
 
 class ChatMessage(BaseModel):
     role: str
     content: str
 
-
-class ChatRequest(BaseModel):
+class SemanticChatRequest(BaseModel):
     messages: List[ChatMessage]
-    use_search: bool = False
-    use_semantic: bool = False
+    model: Optional[str] = None
+    use_semantic: bool = True
+
+class CompetitorSearchRequest(BaseModel):
+    messages: List[ChatMessage]
+    model: Optional[str] = None
+
+class ProposalGenerateRequest(BaseModel):
+    messages: List[ChatMessage]
+    model: Optional[str] = None
 
 
-class SummarizeRequest(BaseModel):
-    text: str
-    max_length: int = 500
+# --- Health ---
 
-
-class AdminAuthRequest(BaseModel):
-    password: str
-
-
-# Simple admin password (in production, use environment variable)
-ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "admin123")
-
-
-# Health check endpoint
 @fastapi_app.get("/api/health")
 async def health_check():
     return {"status": "healthy"}
 
 
-# Document endpoints
+# --- Semantic Chat (Normal Chat) ---
+
+@fastapi_app.post("/api/chat/semantic")
+async def semantic_chat(request: SemanticChatRequest):
+    """Chat with AI using semantic search over indexed documents."""
+    try:
+        if not request.messages:
+            raise HTTPException(status_code=400, detail="messages is required")
+
+        last_message = request.messages[-1].content
+        context = None
+
+        # Semantic search for relevant context
+        try:
+            embedding = openai_service.generate_embedding(last_message)
+            results = search_service.hybrid_search(
+                query=last_message,
+                query_vector=embedding,
+                top=5,
+                use_semantic=request.use_semantic,
+            )
+            if results:
+                context = "\n\n---\n\n".join([r["content"] for r in results])
+        except Exception as e:
+            print(f"[WARN] Semantic search failed: {e}")
+
+        messages = [{"role": m.role, "content": m.content} for m in request.messages]
+        response_text = openai_service.chat(messages=messages, context=context, model=request.model)
+
+        return {"response": response_text, "sources": results if context else []}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# --- Competitor Search (Web Search + AI Table) ---
+
+@fastapi_app.post("/api/chat/competitor-search")
+async def competitor_search(request: CompetitorSearchRequest):
+    """Execute competitor web search based on chat context, return AI-formatted table."""
+    try:
+        if not request.messages:
+            raise HTTPException(status_code=400, detail="messages is required")
+
+        # 1. Build search query from chat context
+        chat_context = "\n".join([f"{m.role}: {m.content}" for m in request.messages])
+
+        # 2. Generate a focused search query from the AI
+        search_query_prompt = f"""以下のチャットの文脈から、競合検索に最適な検索クエリを1つ生成してください。
+クエリのみを出力してください（説明文は不要）。
+
+【チャットの文脈】
+{chat_context}"""
+
+        search_query = openai_service.chat(
+            messages=[{"role": "user", "content": search_query_prompt}],
+            model=request.model,
+        ).strip()
+
+        # 3. Execute Bing Web Search
+        try:
+            web_results = openai_service.web_search(search_query, count=10)
+        except Exception as e:
+            print(f"[WARN] Web search failed: {e}")
+            web_results = []
+
+        if not web_results:
+            return {
+                "table": [],
+                "search_query": search_query,
+                "web_results": [],
+                "message": "Web検索で結果が得られませんでした。検索条件を変えてみてください。",
+            }
+
+        # 4. AI generates competitor table from web results
+        table = openai_service.competitor_search_table(
+            chat_context=chat_context,
+            web_results=web_results,
+            model=request.model,
+        )
+
+        return {
+            "table": table,
+            "search_query": search_query,
+            "web_results": web_results,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# --- Proposal Generation (AI content + PDF) ---
+
+@fastapi_app.post("/api/generate/proposal")
+async def generate_proposal(request: ProposalGenerateRequest):
+    """Generate a proposal PDF based on chat context."""
+    try:
+        if not request.messages:
+            raise HTTPException(status_code=400, detail="messages is required")
+
+        # 1. Build chat context
+        chat_context = "\n".join([f"{m.role}: {m.content}" for m in request.messages])
+
+        # 2. AI generates structured proposal text
+        proposal_prompt = f"""以下のチャットの文脈をもとに、正式な企画書を作成してください。
+
+【チャットの文脈】
+{chat_context}
+
+出力形式の指示:
+- 以下のセクションを含めてください:
+  ## 件名
+  ## 目的
+  ## 背景
+  ## 実施内容
+  ## スケジュール
+  ## 予算
+  ## 期待効果
+  ## 備考（必要に応じて）
+- 各セクションは ## で始めてください
+- 箇条書きは - で始めてください
+- 番号付きリストは 1. 2. 3. で始めてください
+- 具体的で実務的な内容にしてください
+- 日本語で出力してください"""
+
+        proposal_text = openai_service.chat(
+            messages=[{"role": "user", "content": proposal_prompt}],
+            model=request.model,
+        )
+
+        # 3. Generate PDF from proposal text
+        pdf_bytes = proposal_service.generate_pdf(proposal_text, title="企画書")
+
+        # 4. Return PDF as binary response
+        return Response(
+            content=pdf_bytes,
+            media_type="application/pdf",
+            headers={
+                "Content-Disposition": "inline; filename=proposal.pdf",
+            },
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# --- File Management (upload / list / delete with auto-indexing) ---
+
 @fastapi_app.post("/api/documents/upload")
 async def upload_document(file: UploadFile = File(...)):
-    """Upload a document to Azure Blob Storage and index it (chunk by chunk)"""
+    """Upload a file, store in Blob, and auto-index (embed) its content."""
     try:
         content = await file.read()
         file_name = file.filename
 
-        # Upload to Blob Storage
+        # 1. Upload to Blob Storage
         blob_result = blob_service.upload_document(
             file_name=file_name,
             file_content=content,
-            content_type=file.content_type or "application/octet-stream"
+            content_type=file.content_type or "application/octet-stream",
         )
 
-        # Extract text content as chunks
+        # 2. Extract chunks
         chunks, file_type = TextExtractor.extract_chunks(
-            content,
-            file_name,
-            file.content_type or ""
+            content, file_name, file.content_type or ""
         )
         print(f"[{file_type}] {file_name}: {len(chunks)} chunks extracted")
 
-        # Index each chunk separately with AI-generated title and category
+        # 3. Index each chunk (embedding)
         indexed_count = 0
         chunk_results = []
-
         for chunk in chunks:
             doc_id = str(uuid.uuid4())
             try:
-                # AIでタイトルとカテゴリを生成
                 try:
                     ai_title = openai_service.generate_chunk_title(chunk.text)
                 except Exception:
@@ -130,7 +253,7 @@ async def upload_document(file: UploadFile = File(...)):
                     content=chunk.text,
                     file_name=file_name,
                     embedding=embedding,
-                    category=ai_category
+                    category=ai_category,
                 )
                 indexed_count += 1
                 chunk_results.append({
@@ -138,16 +261,14 @@ async def upload_document(file: UploadFile = File(...)):
                     "status": "indexed",
                     "chars": len(chunk.text),
                     "title": ai_title,
-                    "category": ai_category
+                    "category": ai_category,
                 })
-                print(f"  [OK] {chunk.chunk_id}: {len(chunk.text)} chars | {ai_title} | {ai_category}")
             except Exception as e:
                 chunk_results.append({
                     "chunk_id": chunk.chunk_id,
                     "status": "error",
-                    "error": str(e)
+                    "error": str(e),
                 })
-                print(f"  [WARN] {chunk.chunk_id}: {e}")
 
         return {
             "success": True,
@@ -156,7 +277,7 @@ async def upload_document(file: UploadFile = File(...)):
             "total_chunks": len(chunks),
             "indexed_chunks": indexed_count,
             "chunks": chunk_results,
-            "blob_url": blob_result["url"]
+            "blob_url": blob_result["url"],
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -164,7 +285,7 @@ async def upload_document(file: UploadFile = File(...)):
 
 @fastapi_app.get("/api/documents")
 async def list_documents():
-    """List all documents in storage"""
+    """List all stored documents."""
     try:
         documents = blob_service.list_documents()
         return {"documents": documents}
@@ -174,285 +295,34 @@ async def list_documents():
 
 @fastapi_app.delete("/api/documents/{file_name:path}")
 async def delete_document(file_name: str):
-    """Delete a document from storage"""
+    """Delete a file from Blob Storage and remove its chunks from the search index."""
     try:
-        result = blob_service.delete_document(file_name)
-        return {"success": result}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        # 1. Delete from Blob
+        blob_deleted = blob_service.delete_document(file_name)
 
-
-# Search endpoints
-@fastapi_app.post("/api/search")
-async def search_documents(request: SearchRequest):
-    """Search documents"""
-    try:
-        if request.use_vector:
-            embedding = openai_service.generate_embedding(request.query)
-            results = search_service.hybrid_search(
-                query=request.query,
-                query_vector=embedding,
-                top=request.top
-            )
-        else:
-            results = search_service.search(
-                query=request.query,
-                top=request.top
-            )
-        return {"results": results}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-# AI endpoints
-@fastapi_app.post("/api/ai/summarize")
-async def summarize_text(request: SummarizeRequest):
-    """Summarize text using Azure OpenAI"""
-    try:
-        summary = openai_service.summarize(
-            text=request.text,
-            max_length=request.max_length
-        )
-        return {"summary": summary}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@fastapi_app.post("/api/ai/question")
-async def answer_question(request: QuestionRequest):
-    """Answer a question based on context"""
-    try:
-        # If no context provided, search for relevant documents
-        context = request.context
-        if not context:
-            try:
-                embedding = openai_service.generate_embedding(request.question)
-                results = search_service.hybrid_search(
-                    query=request.question,
-                    query_vector=embedding,
-                    top=3
-                )
-                context = "\n\n".join([r["content"] for r in results])
-            except Exception:
-                context = ""
-
-        answer = openai_service.answer_question(
-            question=request.question,
-            context=context
-        )
-        return {"answer": answer}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@fastapi_app.post("/api/ai/chat")
-async def chat(request: ChatRequest):
-    """Chat with AI, optionally using document context. Supports Function Calling for employee registration."""
-    try:
-        context = None
-        if request.use_search and request.messages:
-            last_message = request.messages[-1].content
-            try:
-                embedding = openai_service.generate_embedding(last_message)
-                results = search_service.hybrid_search(
-                    query=last_message,
-                    query_vector=embedding,
-                    top=5,
-                    use_semantic=request.use_semantic
-                )
-                context = "\n\n---\n\n".join([r["content"] for r in results])
-            except Exception:
-                pass
-
-        messages = [{"role": m.role, "content": m.content} for m in request.messages]
-
-        # Use chat_with_tools to enable Function Calling
-        result = openai_service.chat_with_tools(messages=messages, context=context)
-
-        return {
-            "response": result["response"],
-            "tool_calls": result.get("tool_calls", [])
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-# Employee endpoints
-@fastapi_app.get("/api/employees")
-async def list_employees():
-    """Get all registered employees"""
-    try:
-        employees = employee_service.get_all_employees()
-        return {"employees": employees}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@fastapi_app.get("/api/employees/{user_id}")
-async def get_employee(user_id: int):
-    """Get a specific employee by ID"""
-    try:
-        employee = employee_service.get_employee_by_id(user_id)
-        if employee:
-            return employee
-        raise HTTPException(status_code=404, detail="Employee not found")
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@fastapi_app.delete("/api/employees/{user_id}")
-async def delete_employee(user_id: int):
-    """Delete an employee by ID"""
-    try:
-        result = employee_service.delete_employee(user_id)
-        return {"success": result}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-# Admin endpoints
-@fastapi_app.post("/api/admin/create-index")
-async def create_search_index():
-    """Create or update the search index"""
-    try:
-        search_service.create_index()
-        return {"success": True, "message": "Index created successfully"}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@fastapi_app.post("/api/admin/auth")
-async def admin_auth(request: AdminAuthRequest):
-    """Verify admin password"""
-    print(f"[DEBUG] Auth attempt - received: '{request.password}', expected: '{ADMIN_PASSWORD}'")
-    print(f"[DEBUG] Match: {request.password == ADMIN_PASSWORD}")
-    if request.password == ADMIN_PASSWORD:
-        return {"success": True, "message": "Authentication successful"}
-    raise HTTPException(status_code=401, detail="Invalid password")
-
-
-@fastapi_app.post("/api/admin/clear-search")
-async def clear_search_index(request: AdminAuthRequest):
-    """Clear all documents from Azure AI Search index"""
-    if request.password != ADMIN_PASSWORD:
-        raise HTTPException(status_code=401, detail="Invalid password")
-
-    try:
-        result = search_service.clear_all()
-        return {"success": True, "message": "Search index cleared", **result}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@fastapi_app.post("/api/admin/clear-storage")
-async def clear_blob_storage(request: AdminAuthRequest):
-    """Clear all documents from Azure Blob Storage"""
-    if request.password != ADMIN_PASSWORD:
-        raise HTTPException(status_code=401, detail="Invalid password")
-
-    try:
-        result = blob_service.clear_all()
-        return {"success": True, "message": "Blob storage cleared", **result}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@fastapi_app.post("/api/admin/reindex-all")
-async def reindex_all_documents():
-    """Re-index all documents from Blob Storage (chunk by chunk)"""
-    try:
-        # First, create index if it doesn't exist
+        # 2. Remove indexed chunks for this file
         try:
-            search_service.create_index()
-            print("[OK] Index created/verified")
+            # Search for all chunks belonging to this file
+            results = search_service.search(query=file_name, top=50)
+            for r in results:
+                if r.get("file_name") == file_name:
+                    search_service.delete_document(r["id"])
+            print(f"[OK] Removed index entries for {file_name}")
         except Exception as e:
-            print(f"[WARN] Index creation: {e}")
+            print(f"[WARN] Index cleanup failed for {file_name}: {e}")
 
-        # Get all documents from Blob Storage
-        documents = blob_service.list_documents()
-        results = []
-        total_chunks = 0
-        indexed_chunks = 0
-
-        for doc in documents:
-            file_name = doc["name"]
-            print(f"\n[Processing] {file_name}...")
-
-            try:
-                # Download file content
-                content = blob_service.get_document(file_name)
-                if not content:
-                    results.append({"file": file_name, "status": "not_found", "chunks": 0})
-                    continue
-
-                # Extract chunks
-                chunks, file_type = TextExtractor.extract_chunks(content, file_name, "")
-                print(f"  [{file_type}] {len(chunks)} chunks")
-
-                # Index each chunk with AI-generated title and category
-                file_indexed = 0
-                for chunk in chunks:
-                    doc_id = str(uuid.uuid4())
-                    try:
-                        # AIでタイトルとカテゴリを生成
-                        try:
-                            ai_title = openai_service.generate_chunk_title(chunk.text)
-                        except Exception:
-                            ai_title = f"{file_name} - {chunk.chunk_id}"
-
-                        try:
-                            ai_category = openai_service.categorize_chunk(chunk.text)
-                        except Exception:
-                            ai_category = "その他"
-
-                        embedding = openai_service.generate_embedding(chunk.text)
-                        search_service.index_document(
-                            doc_id=doc_id,
-                            title=ai_title,
-                            content=chunk.text,
-                            file_name=file_name,
-                            embedding=embedding,
-                            category=ai_category
-                        )
-                        file_indexed += 1
-                        indexed_chunks += 1
-                        print(f"    [OK] {chunk.chunk_id}: {len(chunk.text)} chars | {ai_title} | {ai_category}")
-                    except Exception as e:
-                        print(f"    [WARN] {chunk.chunk_id}: {e}")
-
-                total_chunks += len(chunks)
-                results.append({
-                    "file": file_name,
-                    "status": "indexed",
-                    "file_type": file_type,
-                    "chunks": len(chunks),
-                    "indexed": file_indexed
-                })
-
-            except Exception as e:
-                print(f"  [ERROR] {e}")
-                results.append({"file": file_name, "status": "error", "error": str(e)})
-
-        return {
-            "success": True,
-            "total_files": len(documents),
-            "total_chunks": total_chunks,
-            "indexed_chunks": indexed_chunks,
-            "results": results
-        }
+        return {"success": blob_deleted}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
-# Azure Functions用の変数（必ず 'app' という名前）
+# --- Azure Functions entry point ---
+
 app = func.AsgiFunctionApp(
     app=fastapi_app,
-    http_auth_level=func.AuthLevel.ANONYMOUS
+    http_auth_level=func.AuthLevel.ANONYMOUS,
 )
 
-# ローカル開発用
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(fastapi_app, host="0.0.0.0", port=7071)

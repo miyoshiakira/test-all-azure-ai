@@ -10,4 +10,5 @@ python-pptx
 python-docx
 openpyxl
 azure-functions
-pyodbc
+httpx
+fpdf2

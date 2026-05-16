@@ -1,5 +1,6 @@
 import os
 import json
+import httpx
 from openai import AzureOpenAI
 from typing import List, Optional, Dict, Any, Callable
 
@@ -214,10 +215,12 @@ class OpenAIService:
 
         return response.choices[0].message.content.strip()
 
-    def chat(self, messages: List[dict], context: Optional[str] = None) -> str:
+    def chat(self, messages: List[dict], context: Optional[str] = None, model: Optional[str] = None) -> str:
         """General chat with optional context (no tools)"""
         if not self.client:
             raise Exception("Azure OpenAI is not configured")
+
+        use_model = model or self.model
 
         system_message = "You are a helpful assistant. Answer in Japanese."
         if context:
@@ -226,7 +229,7 @@ class OpenAIService:
         all_messages = [{"role": "system", "content": system_message}] + messages
 
         response = self.client.chat.completions.create(
-            model=self.model,
+            model=use_model,
             messages=all_messages,
             max_tokens=2000,
             temperature=0.7
@@ -336,3 +339,101 @@ class OpenAIService:
             "response": assistant_message.content,
             "tool_calls": []
         }
+
+    def web_search(self, query: str, count: int = 10) -> List[dict]:
+        """Bing Web Search APIでWeb検索を実行"""
+        subscription_key = os.getenv("BING_SEARCH_API_KEY")
+        if not subscription_key:
+            raise Exception("BING_SEARCH_API_KEY is not configured")
+
+        endpoint = "https://api.bing.microsoft.com/v7.0/search"
+        headers = {"Ocp-Apim-Subscription-Key": subscription_key}
+        params = {
+            "q": query,
+            "count": count,
+            "mkt": "ja-JP",
+            "setLang": "ja",
+        }
+
+        with httpx.Client(timeout=15.0) as client:
+            response = client.get(endpoint, headers=headers, params=params)
+            response.raise_for_status()
+            data = response.json()
+
+        results = []
+        for page in data.get("webPages", {}).get("value", []):
+            results.append({
+                "title": page.get("name", ""),
+                "url": page.get("url", ""),
+                "snippet": page.get("snippet", ""),
+            })
+        return results
+
+    def competitor_search_table(self, chat_context: str, web_results: List[dict], model: Optional[str] = None) -> List[List[str]]:
+        """Web検索結果をもとにAIで競合表を生成（2次元配列で返す）"""
+        if not self.client:
+            raise Exception("Azure OpenAI is not configured")
+
+        use_model = model or self.model
+
+        # Web検索結果をテキスト化
+        web_text = "\n".join([
+            f"- {r['title']}: {r['snippet']} ({r['url']})"
+            for r in web_results
+        ])
+
+        prompt = f"""以下のチャットの文脈とWeb検索結果をもとに、競合他社の一覧表を作成してください。
+
+【チャットの文脈】
+{chat_context}
+
+【Web検索結果】
+{web_text}
+
+出力形式の指示:
+- 1行目はヘッダー行として、列のタイトルを入力してください（例: 競合企業名, 製品名, 価格, 市場シェア, 特徴, URL）
+- 2行目以降はデータ行として、各競合の情報を入力してください
+- 各セルはカンマ区切り（CSV形式）で出力してください
+- 情報が見つからない場合は「不明」と入力してください
+- 必ず5〜10行のデータを作成してください
+- CSVデータのみを出力してください（説明文は不要）"""
+
+        response = self.client.chat.completions.create(
+            model=use_model,
+            messages=[
+                {"role": "system", "content": "あなたは競合分析の専門家です。与えられた情報から競合他社の比較表を作成します。CSV形式のみを出力してください。"},
+                {"role": "user", "content": prompt},
+            ],
+            max_tokens=3000,
+            temperature=0.3,
+        )
+
+        csv_text = response.choices[0].message.content.strip()
+        # CSVをパースして2次元配列に変換
+        rows: List[List[str]] = []
+        for line in csv_text.split("\n"):
+            line = line.strip()
+            if not line:
+                continue
+            # 簡易CSVパース（カンマ区切り、ダブルクォート対応）
+            cells = self._parse_csv_line(line)
+            rows.append(cells)
+
+        return rows
+
+    @staticmethod
+    def _parse_csv_line(line: str) -> List[str]:
+        """簡易CSVパース"""
+        cells = []
+        current = ""
+        in_quotes = False
+        for ch in line:
+            if ch == '"':
+                in_quotes = not in_quotes
+            elif ch == ',' and not in_quotes:
+                cells.append(current.strip())
+                current = ""
+            else:
+                current += ch
+        cells.append(current.strip())
+        return cells
