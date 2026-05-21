@@ -12,7 +12,9 @@ export interface SearchResult {
   content: string;
   file_name: string;
   upload_date: string | null;
+  category: string;
   score: number;
+  reranker_score?: number | null;
 }
 
 export interface ChatMessage {
@@ -20,32 +22,37 @@ export interface ChatMessage {
   content: string;
 }
 
-export interface ToolCall {
-  tool_name: string;
-  arguments: Record<string, unknown>;
-  result: {
-    success: boolean;
-    user_id?: number;
-    user_name?: string;
-    grade?: number;
-    others?: string | null;
-    message?: string;
-    error?: string;
-  };
-}
-
-export interface ChatResponse {
+export interface SemanticChatResponse {
   response: string;
-  tool_calls: ToolCall[];
+  sources: SearchResult[];
 }
 
-export interface Employee {
-  user_id: number;
-  user_name: string;
-  grade: number;
-  others: string | null;
-  created_at: string | null;
-  updated_at: string | null;
+export interface UploadResult {
+  success: boolean;
+  file_name: string;
+  file_type: string;
+  total_chunks: number;
+  indexed_chunks: number;
+  chunks: Array<{
+    chunk_id: string;
+    status: string;
+    chars?: number;
+    title?: string;
+    category?: string;
+    error?: string;
+  }>;
+  blob_url: string;
+}
+
+export interface CompetitorSearchResult {
+  table: string[][];
+  search_query: string;
+  web_results: Array<{
+    title: string;
+    url: string;
+    snippet: string;
+  }>;
+  message?: string;
 }
 
 class ApiClient {
@@ -69,8 +76,45 @@ class ApiClient {
     return response.json();
   }
 
-  // Document endpoints
-  async uploadDocument(file: File): Promise<{ success: boolean; file_name: string; blob_url: string; doc_id: string }> {
+  // Health
+  async healthCheck(): Promise<{ status: string }> {
+    return this.request('/health');
+  }
+
+  // Semantic Chat
+  async semanticChat(messages: ChatMessage[], model?: string, useSemantic: boolean = true): Promise<SemanticChatResponse> {
+    return this.request('/chat/semantic', {
+      method: 'POST',
+      body: JSON.stringify({ messages, model, use_semantic: useSemantic }),
+    });
+  }
+
+  // Competitor Search
+  async competitorSearch(messages: ChatMessage[], model?: string): Promise<CompetitorSearchResult> {
+    return this.request('/chat/competitor-search', {
+      method: 'POST',
+      body: JSON.stringify({ messages, model }),
+    });
+  }
+
+  // Proposal Generation (returns PDF blob)
+  async generateProposal(messages: ChatMessage[], model?: string): Promise<Blob> {
+    const response = await fetch(`${API_BASE}/generate/proposal`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ messages, model }),
+    });
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ detail: 'Proposal generation failed' }));
+      throw new Error(error.detail || 'Proposal generation failed');
+    }
+
+    return response.blob();
+  }
+
+  // File Management
+  async uploadDocument(file: File): Promise<UploadResult> {
     const formData = new FormData();
     formData.append('file', file);
 
@@ -94,91 +138,6 @@ class ApiClient {
   async deleteDocument(fileName: string): Promise<{ success: boolean }> {
     return this.request(`/documents/${encodeURIComponent(fileName)}`, {
       method: 'DELETE',
-    });
-  }
-
-  // Search endpoint
-  async search(query: string, useVector: boolean = false, top: number = 5): Promise<{ results: SearchResult[] }> {
-    return this.request('/search', {
-      method: 'POST',
-      body: JSON.stringify({ query, use_vector: useVector, top }),
-    });
-  }
-
-  // AI endpoints
-  async summarize(text: string, maxLength: number = 500): Promise<{ summary: string }> {
-    return this.request('/ai/summarize', {
-      method: 'POST',
-      body: JSON.stringify({ text, max_length: maxLength }),
-    });
-  }
-
-  async askQuestion(question: string, context?: string): Promise<{ answer: string }> {
-    return this.request('/ai/question', {
-      method: 'POST',
-      body: JSON.stringify({ question, context }),
-    });
-  }
-
-  async chat(messages: ChatMessage[], useSearch: boolean = false, useSemantic: boolean = false): Promise<ChatResponse> {
-    return this.request('/ai/chat', {
-      method: 'POST',
-      body: JSON.stringify({ messages, use_search: useSearch, use_semantic: useSemantic }),
-    });
-  }
-
-  // Employee endpoints
-  async listEmployees(): Promise<{ employees: Employee[] }> {
-    return this.request('/employees');
-  }
-
-  async getEmployee(userId: number): Promise<Employee> {
-    return this.request(`/employees/${userId}`);
-  }
-
-  async deleteEmployee(userId: number): Promise<{ success: boolean }> {
-    return this.request(`/employees/${userId}`, {
-      method: 'DELETE',
-    });
-  }
-
-  // Admin endpoints
-  async createIndex(): Promise<{ success: boolean; message: string }> {
-    return this.request('/admin/create-index', {
-      method: 'POST',
-    });
-  }
-
-  async reindexAll(): Promise<{
-    success: boolean;
-    total: number;
-    indexed: number;
-    results: Array<{ file: string; status: string; file_type?: string; text_length?: number; error?: string }>;
-  }> {
-    return this.request('/admin/reindex-all', {
-      method: 'POST',
-    });
-  }
-
-  // Admin auth and clear endpoints
-  async adminAuth(password: string): Promise<{ success: boolean; message: string }> {
-    return this.request('/admin/auth', {
-      method: 'POST',
-      body: JSON.stringify({ password }),
-    });
-  }
-
-  async clearSearch(password: string): Promise<{ success: boolean; message: string; cleared: boolean; index_name: string }> {
-    return this.request('/admin/clear-search', {
-      method: 'POST',
-      body: JSON.stringify({ password }),
-    });
-  }
-
-  async clearStorage(password: string): Promise<{ success: boolean; message: string; cleared: boolean; deleted_count: number }> {
-    return this.request('/admin/clear-storage', {
-      method: 'POST',
-      body: JSON.stringify({ password }),
     });
   }
 }

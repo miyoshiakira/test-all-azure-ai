@@ -1,40 +1,7 @@
 import { useState } from 'react';
 import ChatPanel, { ChatMessage } from './ChatPanel';
 import { useSessionHistory } from '../hooks/useSessionHistory';
-
-const mockProposal = `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-        企 画 書
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-【件名】新規プロジェクト提案
-
-【目的】
-社内業務効率化のためのAI導入プロジェクト
-
-【背景】
-現在、社内のドキュメント処理に多大な労力を要しており、
-AI技術の活用により大幅な時間短縮が見込まれる。
-
-【実施内容】
-1. AIチャットシステムの導入
-2. ドキュメント自動解析機能の実装
-3. セマンティック検索の導入
-
-【スケジュール】
-- 第1四半期: 要件定義・設計
-- 第2四半期: 開発・テスト
-- 第3四半期: 試験運用
-- 第4四半期: 本格運用開始
-
-【予算】
-総額: 5,000千円
-
-【期待効果】
-- 労働時間: 30%削減
-- 処理精度: 95%以上
-- コスト削減: 年間2,000千円
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`;
+import { apiClient } from '../api/client';
 
 export default function ProposalGenerator() {
   const {
@@ -48,27 +15,53 @@ export default function ProposalGenerator() {
   } = useSessionHistory('proposal');
 
   const [input, setInput] = useState('');
-  const [generatedFile, setGeneratedFile] = useState<string | null>(null);
+  const [pdfUrl, setPdfUrl] = useState<string | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
+  const [isChatLoading, setIsChatLoading] = useState(false);
 
   const messages = activeSession?.messages ?? [];
 
-  const handleSend = (text: string) => {
+  // Chat uses semantic search
+  const handleSend = async (text: string, model: string) => {
     let currentMessages = messages;
     if (!activeSession) {
       createSession();
       currentMessages = [];
     }
+
     const userMsg: ChatMessage = { id: Date.now(), role: 'user', content: text };
-    const botMsg: ChatMessage = {
-      id: Date.now() + 1,
-      role: 'assistant',
-      content: `「${text}」についての企画書を作成する準備ができました。実行ボタンを押して生成を開始してください。`,
-    };
-    const newMessages = [...currentMessages, userMsg, botMsg];
+    const tempMessages = [...currentMessages, userMsg];
     const sessionId = activeSession ? activeSession.id : sessions[0]?.id;
     if (sessionId) {
-      updateSessionMessages(sessionId, newMessages);
+      updateSessionMessages(sessionId, tempMessages);
+    }
+
+    setIsChatLoading(true);
+    try {
+      const apiMessages = tempMessages.map((m) => ({ role: m.role, content: m.content }));
+      const result = await apiClient.semanticChat(apiMessages, model, true);
+
+      const botMsg: ChatMessage = {
+        id: Date.now() + 1,
+        role: 'assistant',
+        content: result.response,
+      };
+      const newMessages = [...tempMessages, botMsg];
+      if (sessionId) {
+        updateSessionMessages(sessionId, newMessages);
+      }
+    } catch (e: unknown) {
+      const errorMsg: ChatMessage = {
+        id: Date.now() + 1,
+        role: 'assistant',
+        content: `エラーが発生しました: ${e instanceof Error ? e.message : 'Unknown error'}`,
+      };
+      const newMessages = [...tempMessages, errorMsg];
+      if (sessionId) {
+        updateSessionMessages(sessionId, newMessages);
+      }
+    } finally {
+      setIsChatLoading(false);
     }
   };
 
@@ -76,12 +69,47 @@ export default function ProposalGenerator() {
     createSession('企画書AI生成コーナーへようこそ。仕様や背景を伝えてください。実行ボタンで企画書を生成します。');
   };
 
-  const handleGenerate = () => {
+  // Generate proposal PDF from chat context
+  const handleGenerate = async () => {
+    if (!activeSession || messages.length <= 1) return;
+
     setIsGenerating(true);
-    setTimeout(() => {
-      setGeneratedFile(mockProposal);
+    try {
+      const apiMessages = messages.map((m) => ({ role: m.role, content: m.content }));
+      const blob = await apiClient.generateProposal(apiMessages);
+
+      // Revoke previous URL to avoid memory leak
+      if (pdfUrl) URL.revokeObjectURL(pdfUrl);
+
+      // Create object URL for PDF blob
+      const url = URL.createObjectURL(blob);
+      setPdfUrl(url);
+
+      // Add a message about the generation
+      const resultMsg: ChatMessage = {
+        id: Date.now(),
+        role: 'assistant',
+        content: '企画書を生成しました。右パネルでPDFを閲覧できます。',
+      };
+      updateSessionMessages(activeSession.id, [...messages, resultMsg]);
+    } catch (e: unknown) {
+      const errorMsg: ChatMessage = {
+        id: Date.now(),
+        role: 'assistant',
+        content: `企画書生成でエラーが発生しました: ${e instanceof Error ? e.message : 'Unknown error'}`,
+      };
+      updateSessionMessages(activeSession.id, [...messages, errorMsg]);
+    } finally {
       setIsGenerating(false);
-    }, 2000);
+    }
+  };
+
+  const handleDownload = () => {
+    if (!pdfUrl) return;
+    const a = document.createElement('a');
+    a.href = pdfUrl;
+    a.download = 'proposal.pdf';
+    a.click();
   };
 
   return (
@@ -104,19 +132,25 @@ export default function ProposalGenerator() {
             onCreateSession={handleCreate}
             onDeleteSession={deleteSession}
           />
+          {isChatLoading && (
+            <div className="chat-loading-bar">
+              <div className="chat-loading-spinner" />
+              <span>AI回答中...</span>
+            </div>
+          )}
           <button
             className="generate-button"
             onClick={handleGenerate}
             disabled={isGenerating || messages.length <= 1}
           >
-            {isGenerating ? '生成中...' : '企画書を生成'}
+            {isGenerating ? '企画書生成中...' : '企画書を生成'}
           </button>
         </div>
         <div className="split-right">
           <div className="file-panel">
             <div className="file-panel-header">
               <h3>生成された企画書</h3>
-              {generatedFile && <button className="download-btn">ダウンロード</button>}
+              {pdfUrl && <button className="download-btn" onClick={handleDownload}>ダウンロード</button>}
             </div>
             <div className="file-preview">
               {isGenerating ? (
@@ -124,8 +158,12 @@ export default function ProposalGenerator() {
                   <div className="spinner" />
                   <p>企画書を生成中...</p>
                 </div>
-              ) : generatedFile ? (
-                <pre className="file-content">{generatedFile}</pre>
+              ) : pdfUrl ? (
+                <iframe
+                  src={pdfUrl}
+                  className="pdf-viewer"
+                  title="企画書PDF"
+                />
               ) : (
                 <div className="empty-panel">
                   <p>左のチャットで仕様を伝え、<br />実行ボタンで企画書を生成</p>

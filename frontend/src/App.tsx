@@ -4,6 +4,7 @@ import NormalChat from './components/NormalChat';
 import ProposalGenerator from './components/ProposalGenerator';
 import CompetitorSearch from './components/CompetitorSearch';
 import DailyProcessResults from './components/DailyProcessResults';
+import DataManager from './components/DataManager';
 
 const navItems = [
   { to: '/', label: 'ダッシュボード', icon: 'dashboard' },
@@ -11,6 +12,7 @@ const navItems = [
   { to: '/proposal', label: '企画書AI生成', icon: 'proposal' },
   { to: '/competitor', label: '競合検索', icon: 'search' },
   { to: '/daily', label: '日次処理結果', icon: 'daily' },
+  { to: '/data', label: 'データ管理', icon: 'data' },
 ];
 
 function App() {
@@ -51,6 +53,7 @@ function App() {
             <Route path="/proposal" element={<ProposalGenerator />} />
             <Route path="/competitor" element={<CompetitorSearch />} />
             <Route path="/daily" element={<DailyProcessResults />} />
+            <Route path="/data" element={<DataManager />} />
           </Routes>
         </main>
       </div>

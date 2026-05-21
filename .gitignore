@@ -37,3 +37,6 @@ build/
 # Project notes with secrets
 構成プロンプト.txt
 logs/
+
+# Cached fonts (downloaded at build time)
+backend/fonts/

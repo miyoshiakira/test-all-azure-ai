@@ -1,15 +1,7 @@
 import { useState } from 'react';
 import ChatPanel, { ChatMessage } from './ChatPanel';
 import { useSessionHistory } from '../hooks/useSessionHistory';
-
-function getMockResponse(input: string): string {
-  const lower = input.toLowerCase();
-  if (lower.includes('こんにちは') || lower.includes('hello'))
-    return 'こんにちは！AIアシスタントです。何かお手伝いできることはありますか？';
-  if (lower.includes('help') || lower.includes('助け'))
-    return '私は以下のようなお手伝いができます：\n\n- 一般的な質問への回答\n- アイデアのブレインストーミング\n- 文章の作成・校正\n- データの分析・整理\n\nお気軽にどうぞ！';
-  return `ご質問ありがとうございます。「${input}」についてお答えします。\n\nこれはモック回答です。実際のAI機能では、より詳細な回答を生成します。`;
-}
+import { apiClient } from '../api/client';
 
 export default function NormalChat() {
   const {
@@ -23,35 +15,65 @@ export default function NormalChat() {
   } = useSessionHistory('normal_chat');
 
   const [input, setInput] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
 
   const messages = activeSession?.messages ?? [];
 
-  const handleSend = (text: string) => {
+  const handleSend = async (text: string, model: string) => {
     let currentMessages = messages;
     if (!activeSession) {
       createSession();
-      // After createSession, activeSession will be set on next render
-      // Use a temporary message list for this render
       currentMessages = [];
     }
+
     const userMsg: ChatMessage = { id: Date.now(), role: 'user', content: text };
-    const botMsg: ChatMessage = { id: Date.now() + 1, role: 'assistant', content: getMockResponse(text) };
-    const newMessages = [...currentMessages, userMsg, botMsg];
+    const tempMessages = [...currentMessages, userMsg];
+
+    // Optimistically add user message
     const sessionId = activeSession ? activeSession.id : sessions[0]?.id;
     if (sessionId) {
-      updateSessionMessages(sessionId, newMessages);
+      updateSessionMessages(sessionId, tempMessages);
+    }
+
+    // Call semantic search API
+    setIsLoading(true);
+    try {
+      const apiMessages = tempMessages.map((m) => ({ role: m.role, content: m.content }));
+      const result = await apiClient.semanticChat(apiMessages, model, true);
+
+      const botMsg: ChatMessage = {
+        id: Date.now() + 1,
+        role: 'assistant',
+        content: result.response,
+      };
+      const newMessages = [...tempMessages, botMsg];
+      if (sessionId) {
+        updateSessionMessages(sessionId, newMessages);
+      }
+    } catch (e: unknown) {
+      const errorMsg: ChatMessage = {
+        id: Date.now() + 1,
+        role: 'assistant',
+        content: `エラーが発生しました: ${e instanceof Error ? e.message : 'Unknown error'}`,
+      };
+      const newMessages = [...tempMessages, errorMsg];
+      if (sessionId) {
+        updateSessionMessages(sessionId, newMessages);
+      }
+    } finally {
+      setIsLoading(false);
     }
   };
 
   const handleCreate = () => {
-    createSession('ノーマルチャットへようこそ。学習データなしの汎用AIです。何でもお気軽にどうぞ。');
+    createSession('ノーマルチャットへようこそ。アップロードされた文書に対してセマンティック検索を行い回答します。何でもお気軽にどうぞ。');
   };
 
   return (
     <div className="page chat-page">
       <div className="page-header">
         <h2>ノーマルチャット</h2>
-        <span className="page-badge">汎用AI</span>
+        <span className="page-badge">セマンティック検索AI</span>
       </div>
       <ChatPanel
         messages={messages}
@@ -64,6 +86,12 @@ export default function NormalChat() {
         onCreateSession={handleCreate}
         onDeleteSession={deleteSession}
       />
+      {isLoading && (
+        <div className="chat-loading-bar">
+          <div className="chat-loading-spinner" />
+          <span>AIが検索・回答中...</span>
+        </div>
+      )}
     </div>
   );
 }

@@ -1,0 +1,107 @@
+name: Deploy Full Stack (Backend + Frontend)
+
+on:
+  push:
+    branches:
+      - master
+  workflow_dispatch:
+
+env:
+  AZURE_FUNCTIONAPP_PACKAGE_PATH: 'backend'
+  PYTHON_VERSION: '3.11'
+  NODE_VERSION: '20'
+
+jobs:
+  # ──────────────────────────────────────
+  # Job 1: Deploy Backend (Azure Functions)
+  # ──────────────────────────────────────
+  deploy-backend:
+    runs-on: ubuntu-latest
+    name: Deploy Backend
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Download Japanese font (IPAexGothic)
+        run: |
+          mkdir -p backend/fonts
+          curl -L -o /tmp/ipaexfont.zip https://moji.or.jp/wp-content/ipafont/IPAexfont/IPAexfont00401.zip
+          unzip -j /tmp/ipaexfont.zip 'IPAexfont00401/ipaexg.ttf' -d backend/fonts/
+          echo "Font cached: $(ls -la backend/fonts/)"
+
+      - name: Deploy to Azure Functions
+        uses: Azure/functions-action@v1
+        with:
+          app-name: 'test-all-ai-func'
+          slot-name: 'Production'
+          package: ${{ env.AZURE_FUNCTIONAPP_PACKAGE_PATH }}
+          publish-profile: ${{ secrets.AZUREAPPSERVICE_PUBLISHPROFILE_43E781FD13634D8D834EB60767B1FFFB }}
+          scm-do-build-during-deployment: true
+          enable-oryx-build: true
+
+  # ──────────────────────────────────────
+  # Job 2: Deploy Frontend (Azure Static Web Apps)
+  # ──────────────────────────────────────
+  deploy-frontend:
+    runs-on: ubuntu-latest
+    name: Deploy Frontend
+    needs: deploy-backend
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          submodules: true
+          lfs: false
+
+      - name: Install OIDC Client from Core Package
+        run: npm install @actions/core@1.6.0 @actions/http-client
+
+      - name: Get Id Token
+        uses: actions/github-script@v6
+        id: idtoken
+        with:
+          script: |
+            const coredemo = require('@actions/core')
+            return await coredemo.getIDToken()
+          result-encoding: string
+
+      - name: Build And Deploy
+        id: builddeploy
+        uses: Azure/static-web-apps-deploy@v1
+        with:
+          azure_static_web_apps_api_token: ${{ secrets.AZURE_STATIC_WEB_APPS_API_TOKEN_THANKFUL_TREE_08B981300 }}
+          action: "upload"
+          app_location: "./frontend"
+          api_location: ""
+          output_location: "dist"
+          github_id_token: ${{ steps.idtoken.outputs.result }}
+
+  # ──────────────────────────────────────
+  # Job 3: Summary
+  # ──────────────────────────────────────
+  deploy-summary:
+    runs-on: ubuntu-latest
+    name: Deploy Summary
+    needs: [deploy-backend, deploy-frontend]
+    if: always()
+    steps:
+      - name: Check results
+        run: |
+          echo "========================================"
+          echo "  Deploy Summary"
+          echo "========================================"
+          echo "Backend:  ${{ needs.deploy-backend.result }}"
+          echo "Frontend: ${{ needs.deploy-frontend.result }}"
+          echo "========================================"
+          if [ "${{ needs.deploy-backend.result }}" = "failure" ] || [ "${{ needs.deploy-frontend.result }}" = "failure" ]; then
+            echo "One or more deployments failed!"
+            exit 1
+          fi
+          echo "All deployments succeeded!"
