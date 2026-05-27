@@ -36,9 +36,12 @@ class SearchService:
                 endpoint=endpoint,
                 credential=credential
             )
+            print(f"[OK] Azure AI Search connected: {endpoint} / {self.index_name}")
         else:
             self.search_client = None
             self.index_client = None
+            print("[WARN] Azure AI Search is NOT configured. Semantic search will be unavailable.")
+            print("        Set AZURE_SEARCH_ENDPOINT and AZURE_SEARCH_API_KEY environment variables.")
 
     def create_index(self) -> bool:
         """Create or update the search index"""

@@ -341,33 +341,79 @@ class OpenAIService:
         }
 
     def web_search(self, query: str, count: int = 10) -> List[dict]:
-        """Bing Web Search APIでWeb検索を実行"""
-        subscription_key = os.getenv("BING_SEARCH_API_KEY")
-        if not subscription_key:
-            raise Exception("BING_SEARCH_API_KEY is not configured")
+        """Web検索を実行（Grounding with Bing Search via Azure OpenAI）"""
+        if not self.client:
+            raise Exception("Azure OpenAI is not configured")
 
-        endpoint = "https://api.bing.microsoft.com/v7.0/search"
-        headers = {"Ocp-Apim-Subscription-Key": subscription_key}
-        params = {
-            "q": query,
-            "count": count,
-            "mkt": "ja-JP",
-            "setLang": "ja",
-        }
+        use_model = os.getenv("AZURE_OPENAI_GROUNDING_MODEL") or self.model
 
-        with httpx.Client(timeout=15.0) as client:
-            response = client.get(endpoint, headers=headers, params=params)
-            response.raise_for_status()
-            data = response.json()
+        try:
+            response = self.client.chat.completions.create(
+                model=use_model,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": "あなたはWeb検索アシスタントです。ユーザーの質問に対して、Web上の情報を検索して回答してください。各情報について、ソースURL、タイトル、スニペットを含めてください。以下のJSON形式で出力してください:\n[{\"title\": \"...\", \"url\": \"...\", \"snippet\": \"...\"}]"
+                    },
+                    {"role": "user", "content": query}
+                ],
+                max_tokens=2000,
+                temperature=0.3,
+                extra_body={
+                    "data_sources": [{
+                        "type": "azure_grounding_with_bing",
+                        "parameters": {
+                            "search_query": query,
+                        }
+                    }]
+                }
+            )
 
-        results = []
-        for page in data.get("webPages", {}).get("value", []):
-            results.append({
-                "title": page.get("name", ""),
-                "url": page.get("url", ""),
-                "snippet": page.get("snippet", ""),
-            })
-        return results
+            content = response.choices[0].message.content
+
+            # Try to parse JSON from response
+            import json
+            try:
+                # Find JSON array in response
+                start = content.find('[')
+                end = content.rfind(']') + 1
+                if start >= 0 and end > start:
+                    results = json.loads(content[start:end])
+                    return results[:count]
+            except (json.JSONDecodeError, ValueError):
+                pass
+
+            # Fallback: return content as single result
+            return [{
+                "title": "Web Search Result",
+                "url": "",
+                "snippet": content[:500],
+            }]
+
+        except Exception as e:
+            # Fallback to regular chat if grounding is not available
+            print(f"[WARN] Grounding with Bing Search failed: {e}")
+            print("[INFO] Falling back to AI knowledge (no real-time web data)")
+
+            response = self.client.chat.completions.create(
+                model=use_model,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": "Web検索が利用できないため、あなたの知識に基づいて回答してください。情報が古い可能性があることを明記してください。"
+                    },
+                    {"role": "user", "content": query}
+                ],
+                max_tokens=1000,
+                temperature=0.3,
+            )
+
+            content = response.choices[0].message.content
+            return [{
+                "title": "AI Knowledge (no real-time search)",
+                "url": "",
+                "snippet": content[:500],
+            }]
 
     def competitor_search_table(self, chat_context: str, web_results: List[dict], model: Optional[str] = None) -> List[List[str]]:
         """Web検索結果をもとにAIで競合表を生成（2次元配列で返す）"""

@@ -1,9 +1,9 @@
 import azure.functions as func
-from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi import FastAPI, UploadFile, File, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import Response
+from fastapi.responses import Response, JSONResponse
 from pydantic import BaseModel
-from typing import List, Optional
+from typing import List, Optional, Any
 from dotenv import load_dotenv
 import uuid
 import os
@@ -72,18 +72,23 @@ async def semantic_chat(request: SemanticChatRequest):
         context = None
 
         # Semantic search for relevant context
-        try:
-            embedding = openai_service.generate_embedding(last_message)
-            results = search_service.hybrid_search(
-                query=last_message,
-                query_vector=embedding,
-                top=5,
-                use_semantic=request.use_semantic,
-            )
-            if results:
-                context = "\n\n---\n\n".join([r["content"] for r in results])
-        except Exception as e:
-            print(f"[WARN] Semantic search failed: {e}")
+        results = []
+        if not search_service.search_client:
+            print("[WARN] Azure AI Search is not configured. Skipping semantic search.")
+        else:
+            try:
+                embedding = openai_service.generate_embedding(last_message)
+                results = search_service.hybrid_search(
+                    query=last_message,
+                    query_vector=embedding,
+                    top=5,
+                    use_semantic=request.use_semantic,
+                )
+                if results:
+                    context = "\n\n---\n\n".join([r["content"] for r in results])
+                    print(f"[OK] Semantic search found {len(results)} results")
+            except Exception as e:
+                print(f"[WARN] Semantic search failed: {e}")
 
         messages = [{"role": m.role, "content": m.content} for m in request.messages]
         response_text = openai_service.chat(messages=messages, context=context, model=request.model)
@@ -314,6 +319,313 @@ async def delete_document(file_name: str):
         return {"success": blob_deleted}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@fastapi_app.post("/api/reindex")
+async def reindex_blob_files():
+    """Re-index all files from Blob Storage into Azure AI Search."""
+    try:
+        result = _mcp_tool_call("reindex_blob_files", {})
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# --- MCP (Model Context Protocol) Endpoint ---
+# Streamable HTTP transport for Claude custom MCP integration
+
+MCP_TOOLS = [
+    {
+        "name": "chat",
+        "description": "社内ドキュメントに対してセマンティック検索を行い、AIが回答するチャット機能。社内文書に関する質問に最適。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "message": {
+                    "type": "string",
+                    "description": "ユーザーの質問やメッセージ",
+                },
+                "model": {
+                    "type": "string",
+                    "description": "使用するAIモデル名（省略可）",
+                },
+            },
+            "required": ["message"],
+        },
+    },
+    {
+        "name": "competitor_search",
+        "description": "チャット文脈をもとにWeb検索し、競合他社の一覧表を生成する機能。競合分析に最適。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "競合検索のクエリまたは質問",
+                },
+                "model": {
+                    "type": "string",
+                    "description": "使用するAIモデル名（省略可）",
+                },
+            },
+            "required": ["query"],
+        },
+    },
+    {
+        "name": "generate_proposal",
+        "description": "入力内容をもとにAIが企画書テキストを生成する機能。企画書の構造化テキストを返す。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "topic": {
+                    "type": "string",
+                    "description": "企画書の主題や要件",
+                },
+                "model": {
+                    "type": "string",
+                    "description": "使用するAIモデル名（省略可）",
+                },
+            },
+            "required": ["topic"],
+        },
+    },
+    {
+        "name": "reindex_blob_files",
+        "description": "Azure Blob Storage内の全ファイルを読み込み、テキスト抽出→埋め込み生成→ベクトルDB（Azure AI Search）にインデックスする機能。既存インデックスはクリア後に再構築される。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {},
+            "required": [],
+        },
+    },
+]
+
+
+def _mcp_tool_call(name: str, args: dict) -> Any:
+    """Execute an MCP tool by name and return the result."""
+    if name == "chat":
+        message = args.get("message", "")
+        model = args.get("model")
+
+        # Semantic search for context
+        context = None
+        results = []
+        try:
+            embedding = openai_service.generate_embedding(message)
+            results = search_service.hybrid_search(
+                query=message,
+                query_vector=embedding,
+                top=5,
+                use_semantic=True,
+            )
+            if results:
+                context = "\n\n---\n\n".join([r["content"] for r in results])
+        except Exception as e:
+            print(f"[MCP WARN] Semantic search failed: {e}")
+
+        response_text = openai_service.chat(
+            messages=[{"role": "user", "content": message}],
+            context=context,
+            model=model,
+        )
+        return {"response": response_text, "sources_count": len(results)}
+
+    elif name == "competitor_search":
+        query = args.get("query", "")
+        model = args.get("model")
+
+        # Generate search query
+        search_query = openai_service.chat(
+            messages=[{"role": "user", "content": f"以下から競合検索クエリを1つ生成（クエリのみ出力）:\n{query}"}],
+            model=model,
+        ).strip()
+
+        # Web search
+        try:
+            web_results = openai_service.web_search(search_query, count=10)
+        except Exception as e:
+            print(f"[MCP WARN] Web search failed: {e}")
+            web_results = []
+
+        if not web_results:
+            return {"table": [], "search_query": search_query, "message": "Web検索で結果が得られませんでした。"}
+
+        # Generate table
+        table = openai_service.competitor_search_table(
+            chat_context=query,
+            web_results=web_results,
+            model=model,
+        )
+        return {"table": table, "search_query": search_query}
+
+    elif name == "generate_proposal":
+        topic = args.get("topic", "")
+        model = args.get("model")
+
+        proposal_prompt = f"""以下の内容をもとに、正式な企画書を作成してください。
+
+【内容】
+{topic}
+
+出力形式の指示:
+- 以下のセクションを含める: ## 件名, ## 目的, ## 背景, ## 実施内容, ## スケジュール, ## 予算, ## 期待効果, ## 備考
+- 各セクションは ## で始める
+- 箇条書きは - で始める
+- 番号付きリストは 1. 2. 3. で始める
+- 具体的で実務的な内容にする
+- 日本語で出力する"""
+
+        proposal_text = openai_service.chat(
+            messages=[{"role": "user", "content": proposal_prompt}],
+            model=model,
+        )
+        return {"proposal": proposal_text}
+
+    elif name == "reindex_blob_files":
+        # 1. List all blobs
+        if not blob_service.container_client:
+            raise Exception("Azure Storage is not configured")
+
+        blobs = blob_service.list_documents()
+        if not blobs:
+            return {"status": "no_files", "message": "Blob Storageにファイルがありません。"}
+
+        # 2. Ensure search index exists
+        try:
+            search_service.create_index()
+            print("[MCP] Search index created/updated")
+        except Exception as e:
+            print(f"[MCP WARN] Index creation: {e}")
+
+        # 3. Process each blob
+        results = []
+        total_indexed = 0
+        for blob_info in blobs:
+            file_name = blob_info["name"]
+            try:
+                # Download blob content
+                content = blob_service.get_document(file_name)
+                if not content:
+                    results.append({"file": file_name, "status": "skip", "reason": "download failed"})
+                    continue
+
+                # Extract chunks
+                chunks, file_type = TextExtractor.extract_chunks(content, file_name, "")
+                print(f"[MCP] [{file_type}] {file_name}: {len(chunks)} chunks")
+
+                # Index each chunk
+                indexed = 0
+                for chunk in chunks:
+                    doc_id = str(uuid.uuid4())
+                    try:
+                        embedding = openai_service.generate_embedding(chunk.text)
+                        search_service.index_document(
+                            doc_id=doc_id,
+                            title=f"{file_name} - {chunk.chunk_id}",
+                            content=chunk.text,
+                            file_name=file_name,
+                            embedding=embedding,
+                            category="",
+                        )
+                        indexed += 1
+                    except Exception as e:
+                        print(f"[MCP WARN] Chunk index failed: {e}")
+
+                total_indexed += indexed
+                results.append({"file": file_name, "type": file_type, "chunks": len(chunks), "indexed": indexed})
+            except Exception as e:
+                results.append({"file": file_name, "status": "error", "error": str(e)})
+
+        return {
+            "status": "completed",
+            "total_files": len(blobs),
+            "total_indexed_chunks": total_indexed,
+            "details": results,
+        }
+
+    else:
+        raise ValueError(f"Unknown tool: {name}")
+
+
+@fastapi_app.post("/mcp")
+async def mcp_endpoint(request: Request):
+    """MCP Streamable HTTP endpoint for Claude custom MCP integration."""
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse(
+            status_code=400,
+            content={"jsonrpc": "2.0", "error": {"code": -32700, "message": "Parse error"}, "id": None},
+        )
+
+    jsonrpc = body.get("jsonrpc", "2.0")
+    method = body.get("method", "")
+    msg_id = body.get("id")
+    params = body.get("params", {})
+
+    # --- initialize ---
+    if method == "initialize":
+        return JSONResponse(content={
+            "jsonrpc": jsonrpc,
+            "id": msg_id,
+            "result": {
+                "protocolVersion": "2025-03-26",
+                "capabilities": {
+                    "tools": {"listChanged": False},
+                },
+                "serverInfo": {
+                    "name": "ai-chat-hub-mcp",
+                    "version": "1.0.0",
+                },
+            },
+        })
+
+    # --- tools/list ---
+    if method == "tools/list":
+        return JSONResponse(content={
+            "jsonrpc": jsonrpc,
+            "id": msg_id,
+            "result": {"tools": MCP_TOOLS},
+        })
+
+    # --- tools/call ---
+    if method == "tools/call":
+        tool_name = params.get("name", "")
+        tool_args = params.get("arguments", {})
+
+        try:
+            result = _mcp_tool_call(tool_name, tool_args)
+            return JSONResponse(content={
+                "jsonrpc": jsonrpc,
+                "id": msg_id,
+                "result": {
+                    "content": [{"type": "text", "text": str(result)}],
+                },
+            })
+        except Exception as e:
+            return JSONResponse(content={
+                "jsonrpc": jsonrpc,
+                "id": msg_id,
+                "result": {
+                    "content": [{"type": "text", "text": f"Error: {str(e)}"}],
+                    "isError": True,
+                },
+            })
+
+    # --- notifications (initialized, etc.) ---
+    if method == "notifications/initialized" or method == "initialized":
+        return JSONResponse(status_code=204, content=None)
+
+    # --- ping ---
+    if method == "ping":
+        return JSONResponse(content={"jsonrpc": jsonrpc, "id": msg_id, "result": {}})
+
+    # --- unknown method ---
+    return JSONResponse(content={
+        "jsonrpc": jsonrpc,
+        "id": msg_id,
+        "error": {"code": -32601, "message": f"Method not found: {method}"},
+    })
 
 
 # --- Azure Functions entry point ---
