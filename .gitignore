@@ -40,3 +40,4 @@ logs/
 
 # Cached fonts (downloaded at build time)
 backend/fonts/
+testdata/

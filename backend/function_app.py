@@ -10,7 +10,7 @@ import os
 
 load_dotenv()
 
-from services import BlobService, OpenAIService, SearchService, TextExtractor, ProposalService
+from services import BlobService, OpenAIService, SearchService, TextExtractor, TextSplitter, ProposalService
 
 fastapi_app = FastAPI(
     title="AI Chat Hub API",
@@ -229,11 +229,15 @@ async def upload_document(file: UploadFile = File(...)):
             content_type=file.content_type or "application/octet-stream",
         )
 
-        # 2. Extract chunks
-        chunks, file_type = TextExtractor.extract_chunks(
-            content, file_name, file.content_type or ""
-        )
-        print(f"[{file_type}] {file_name}: {len(chunks)} chunks extracted")
+        # 2. Extract chunks (TextSplitter for supported formats)
+        if TextSplitter.is_supported(file_name):
+            chunks, file_type = TextSplitter.split(content, file_name)
+            print(f"[{file_type}] {file_name}: {len(chunks)} chunks (semantic split)")
+        else:
+            chunks, file_type = TextExtractor.extract_chunks(
+                content, file_name, file.content_type or ""
+            )
+            print(f"[{file_type}] {file_name}: {len(chunks)} chunks (basic split)")
 
         # 3. Index each chunk (embedding)
         indexed_count = 0
@@ -509,9 +513,13 @@ def _mcp_tool_call(name: str, args: dict) -> Any:
                     results.append({"file": file_name, "status": "skip", "reason": "download failed"})
                     continue
 
-                # Extract chunks
-                chunks, file_type = TextExtractor.extract_chunks(content, file_name, "")
-                print(f"[MCP] [{file_type}] {file_name}: {len(chunks)} chunks")
+                # Extract chunks (TextSplitter for supported formats)
+                if TextSplitter.is_supported(file_name):
+                    chunks, file_type = TextSplitter.split(content, file_name)
+                    print(f"[MCP] [{file_type}] {file_name}: {len(chunks)} chunks (semantic split)")
+                else:
+                    chunks, file_type = TextExtractor.extract_chunks(content, file_name, "")
+                    print(f"[MCP] [{file_type}] {file_name}: {len(chunks)} chunks (basic split)")
 
                 # Index each chunk
                 indexed = 0

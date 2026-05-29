@@ -7,7 +7,7 @@ import uuid
 from dotenv import load_dotenv
 load_dotenv()
 
-from services import BlobService, OpenAIService, SearchService, TextExtractor
+from services import BlobService, OpenAIService, SearchService, TextExtractor, TextSplitter
 
 
 def main():
@@ -58,8 +58,13 @@ def main():
                 results.append({"file": file_name, "status": "skip"})
                 continue
 
-            chunks, file_type = TextExtractor.extract_chunks(content, file_name, "")
-            print(f"  [{file_type}] {len(chunks)} chunks extracted")
+            # TextSplitter（意味分割）を優先使用、未対応形式はTextExtractorにフォールバック
+            if TextSplitter.is_supported(file_name):
+                chunks, file_type = TextSplitter.split(content, file_name)
+                print(f"  [{file_type}] {len(chunks)} chunks (semantic split)")
+            else:
+                chunks, file_type = TextExtractor.extract_chunks(content, file_name, "")
+                print(f"  [{file_type}] {len(chunks)} chunks (basic split)")
 
             indexed = 0
             for chunk in chunks:
